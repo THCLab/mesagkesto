@@ -2,4 +2,5 @@
 members = [
 	"messagebox",
 	"bindings/dart",
+	"communication",
 ]

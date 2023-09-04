@@ -1,46 +1,8 @@
 use said::derivation::{HashFunction, HashFunctionCode};
-use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 
-use crate::{notifier::NotifyHandle, storage::StorageHandle};
+use crate::{notifier::NotifyHandle, storage::StorageHandle, messages::{MessageType, QueryRoute, ExchangeRoute}};
 
-#[derive(Serialize, Deserialize)]
-#[serde(tag = "t")]
-#[serde(rename_all = "lowercase")]
-pub enum MessageType {
-    Qry(QueryArguments),
-    Exn(ExchangeArguments),
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum QueryArguments {
-    ByDigest { i: String, d: Vec<String> },
-    BySn { i: String, s: usize },
-}
-
-impl ToString for MessageType {
-    fn to_string(&self) -> String {
-        serde_json::to_string(&self).unwrap()
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(tag = "r")]
-#[serde(rename_all = "lowercase")]
-pub enum ExchangeArguments {
-    // Forward `a` to other identifier
-    Fwd {
-        i: String,
-        a: String,
-    },
-    // Save firebase token (f) of given identifier (i)
-    #[serde(rename = "/auth/f")]
-    SetFirebase {
-        i: String,
-        f: String,
-    },
-}
 
 pub enum ValidateMessage {
     Authenticate {
@@ -72,27 +34,28 @@ impl ValidateActor {
     async fn handle_message(&mut self, msg: ValidateMessage) {
         match msg {
             ValidateMessage::Authenticate { message, sender } => {
+                dbg!(&message);
                 let parsed: MessageType = serde_json::from_str(&message).unwrap();
                 let out = match parsed {
-                    MessageType::Qry(qry) => match qry {
-                        QueryArguments::ByDigest { i, d } => {
-                            println!("Getting messages by digest {:?}", &d);
-                            self.storage.get_by_digest(&i, d).await
+                    MessageType::Qry(qry) => match qry.get_route() {
+                        QueryRoute::ByDigest { i, a } => {
+                            println!("Getting messages by digest {:?}", &a);
+                            self.storage.get_by_digest(&i, a).await
                         }
-                        QueryArguments::BySn { i, s } => {
+                        QueryRoute::BySn { i, s } => {
                             println!("Getting messages for {} from index {}", &i, s);
                             self.storage.get_by_index(&i, s).await
                         }
                     },
-                    MessageType::Exn(exn) => match exn {
-                        ExchangeArguments::Fwd { i, a } => {
+                    MessageType::Exn(exn) => match exn.get_route() {
+                        ExchangeRoute::Fwd { i, a } => {
                             println!("Saving message {} for {}", &a, &i);
                             let digest_algo: HashFunction = (HashFunctionCode::Blake3_256).into();
                             let sai = digest_algo.derive(a.as_bytes()).to_string();
                             self.storage.save(i.clone(), a, sai).await.to_string();
                             None
                         }
-                        ExchangeArguments::SetFirebase { i, f: t } => {
+                        ExchangeRoute::SetFirebase { i, f: t } => {
                             self.notify.save_token(i, t).await;
                             None
                         }

@@ -1,7 +1,6 @@
 use anyhow::Error;
 use messagebox::{
     forward_message, messagebox::MessageBox, query_by_digest, query_by_sn, register_token,
-    validate::MessageType,
 };
 use said::derivation::{HashFunction, HashFunctionCode};
 use tempfile::Builder;

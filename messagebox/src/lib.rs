@@ -1,6 +1,6 @@
+use messages::{MessageType, QueryRoute, ExchangeRoute, Exchange, Query};
 use thiserror::Error;
 use url::Url;
-use validate::ExchangeArguments;
 
 pub mod messagebox;
 pub mod messagebox_listener;
@@ -8,7 +8,7 @@ pub mod notifier;
 pub mod oobis;
 pub mod storage;
 pub mod validate;
-use crate::validate::MessageType;
+pub mod messages;
 
 #[derive(Error, Debug)]
 pub enum MessageboxError {
@@ -17,25 +17,27 @@ pub enum MessageboxError {
 }
 
 pub fn register_token(id: String, token: String) -> MessageType {
-    MessageType::Exn(ExchangeArguments::SetFirebase { i: id, f: token })
+    let route = ExchangeRoute::SetFirebase { i: id, f: token };
+    let exn = Exchange::new(said::sad::SerializationFormats::JSON, said::derivation::HashFunctionCode::Blake3_256.into(), route);
+    MessageType::Exn(exn)
 }
 
 pub fn forward_message(receiver: String, data: String) -> MessageType {
-    MessageType::Exn(ExchangeArguments::Fwd {
-        i: receiver,
-        a: data,
-    })
+    let route = ExchangeRoute::Fwd { i: receiver, a: data };
+    let exn = Exchange::new(said::sad::SerializationFormats::JSON, said::derivation::HashFunctionCode::Blake3_256.into(), route);
+    MessageType::Exn(exn)
 }
 
 pub fn query_by_sn(receiver: String, sn: usize) -> MessageType {
-    MessageType::Qry(validate::QueryArguments::BySn { i: receiver, s: sn })
+    let route = QueryRoute::BySn { i: receiver, s: sn };
+    let qry = Query::new(said::sad::SerializationFormats::JSON, said::derivation::HashFunctionCode::Blake3_256.into(), route);
+    MessageType::Qry(qry)
 }
 
 pub fn query_by_digest(receiver: String, digests: Vec<String>) -> MessageType {
-    MessageType::Qry(validate::QueryArguments::ByDigest {
-        i: receiver,
-        d: digests,
-    })
+    let route = QueryRoute::ByDigest { i: receiver, a: digests };
+    let qry = Query::new(said::sad::SerializationFormats::JSON, said::derivation::HashFunctionCode::Blake3_256.into(), route);
+    MessageType::Qry(qry)
 }
 
 pub fn send(message: &str, url: Url) -> Result<(), MessageboxError> {

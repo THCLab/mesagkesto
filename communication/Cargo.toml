@@ -1,0 +1,11 @@
+[package]
+name = "communication"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+serde = "1.0.188"
+said = { git = "https://github.com/THCLab/cesrox", features = ["macros"]}
+thiserror = "1.0.47"

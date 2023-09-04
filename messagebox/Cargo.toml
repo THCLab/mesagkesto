@@ -18,6 +18,7 @@ anyhow = { version = "1.0.56" }
 tokio = {version = "1.29.1", features = ["sync", "rt", "macros", "rt-multi-thread", "time"]}
 ureq = {version = "2.6.2", features = ["json"]}
 said = {git = "https://github.com/THCLab/cesrox"}
+communication = {path = "../communication"}
 
 [dev-dependencies]
 controller = { git = "https://github.com/THCLab/keriox" }
