@@ -1,15 +1,17 @@
-use said::{sad::SerializationFormats, derivation::HashFunction};
+use crate::{GenericEvent, Version};
+use said::{derivation::HashFunction, sad::SerializationFormats};
 use serde::{Deserialize, Serialize};
-use crate::{error::Error, Version, GenericEvent};
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
 #[serde(rename_all = "lowercase")]
 enum QueryType {
-	Qry
+    Qry,
 }
 
 #[derive(Deserialize, Serialize)]
-pub struct QueryMessage<V: Version + Serialize + Clone, D: Serialize + Clone>(GenericEvent<V, QueryType, D>);
+pub struct QueryMessage<V: Version + Serialize + Clone, D: Serialize + Clone>(
+    GenericEvent<V, QueryType, D>,
+);
 
 impl<V: Version + Serialize + Clone, D: Serialize + Clone> QueryMessage<V, D> {
     pub fn new(format: SerializationFormats, derivation: HashFunction, route: D) -> Self {
@@ -21,5 +23,3 @@ impl<V: Version + Serialize + Clone, D: Serialize + Clone> QueryMessage<V, D> {
         self.0.route.clone()
     }
 }
-
-

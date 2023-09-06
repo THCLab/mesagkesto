@@ -1,6 +1,9 @@
-use communication::{exchange::ExchangeMessage, Version, query::QueryMessage};
-use said::{version::SerializationInfo, sad::SerializationFormats};
-use serde::{Serialize, Deserialize};
+use communication::{exchange::ExchangeMessage, query::QueryMessage, Version};
+use said::{
+    sad::SerializationFormats,
+    version::SerializationInfo,
+};
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
 #[serde(untagged)]
@@ -12,21 +15,24 @@ pub enum MessageType {
 #[derive(Default, Serialize, Deserialize, Clone)]
 pub struct MessageboxInfo(SerializationInfo);
 
-
 impl Version for MessageboxInfo {
     fn encode<T: Serialize>(&self, d: &T) -> Vec<u8> {
-       self.0.serialize(d).unwrap()
+        self.0.serialize(d).unwrap()
     }
 
     fn new(len: usize) -> Self {
-        MessageboxInfo(SerializationInfo::new("MSGB".to_string(), 0, 0, SerializationFormats::JSON, len))
+        MessageboxInfo(SerializationInfo::new(
+            "MSGB".to_string(),
+            0,
+            0,
+            SerializationFormats::JSON,
+            len,
+        ))
     }
 }
 
-pub type Exchange = ExchangeMessage<MessageboxInfo, ExchangeRoute>; 
+pub type Exchange = ExchangeMessage<MessageboxInfo, ExchangeRoute>;
 pub type Query = QueryMessage<MessageboxInfo, QueryRoute>;
-
-
 
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(untagged)]
@@ -76,8 +82,14 @@ pub fn test_parse_exchange() {
 pub fn test_exchange() {
     use said::derivation::{HashFunction, HashFunctionCode};
     let h = HashFunction::from(HashFunctionCode::Blake3_256);
-    let r = ExchangeRoute::SetFirebase { i: "id".to_string(), f: "token".to_string() };
+    let r = ExchangeRoute::SetFirebase {
+        i: "id".to_string(),
+        f: "token".to_string(),
+    };
     let exn = Exchange::new(said::sad::SerializationFormats::JSON, h, r);
 
-    assert_eq!(r#"{"v":"MSGB00JSON000079_","t":"exn","d":"EPPfkHqNrgbVEk8VtSq4dWRLZl5xjUz10YgEHfS2HWsd","r":"/auth/f","i":"id","f":"token"}"#, &exn.encode());
+    assert_eq!(
+        r#"{"v":"MSGB00JSON000079_","t":"exn","d":"EPPfkHqNrgbVEk8VtSq4dWRLZl5xjUz10YgEHfS2HWsd","r":"/auth/f","i":"id","f":"token"}"#,
+        &exn.encode()
+    );
 }

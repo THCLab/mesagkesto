@@ -1,9 +1,17 @@
 use said::derivation::{HashFunction, HashFunctionCode};
-use tokio::sync::{mpsc, oneshot};
+use thiserror::Error;
+use tokio::sync::{
+    mpsc,
+    oneshot::{self, Sender},
+};
 
-use crate::{notifier::NotifyHandle, storage::StorageHandle, messages::{MessageType, QueryRoute, ExchangeRoute}};
+use crate::{
+    messages::{ExchangeRoute, MessageType, QueryRoute},
+    notifier::NotifyHandle,
+    storage::StorageHandle,
+};
 
-
+#[derive(Debug)]
 pub enum ValidateMessage {
     Authenticate {
         message: String,
@@ -78,6 +86,12 @@ async fn run_my_actor(mut actor: ValidateActor) {
     }
 }
 
+#[derive(Error, Debug)]
+pub enum ValidationError {
+    #[error("Full channel")]
+    FullChannel(ValidateMessage),
+}
+
 #[derive(Clone)]
 pub struct ValidateHandle {
     validate_sender: mpsc::Sender<ValidateMessage>,
@@ -94,8 +108,11 @@ impl ValidateHandle {
         }
     }
 
-    pub async fn validate(&self, message: String) -> Option<String> {
-        let (send, recv) = oneshot::channel();
+    pub async fn validate(
+        &self,
+        message: String,
+        send: Sender<Option<String>>,
+    ) -> Result<(), ValidationError> {
         let msg = ValidateMessage::Authenticate {
             message,
             sender: send,
@@ -104,7 +121,10 @@ impl ValidateHandle {
         // Ignore send errors. If this send fails, so does the
         // recv.await below. There's no reason to check for the
         // same failure twice.
-        let _ = self.validate_sender.send(msg).await;
-        recv.await.expect("Actor task has been killed")
+        let _ = self.validate_sender.try_send(msg).map_err(|e| match e {
+            mpsc::error::TrySendError::Full(msg) => ValidationError::FullChannel(msg),
+            mpsc::error::TrySendError::Closed(_) => todo!(),
+        })?;
+        Ok(())
     }
 }

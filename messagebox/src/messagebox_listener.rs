@@ -110,7 +110,7 @@ mod http_handlers {
         body: String,
         data: web::Data<Arc<MessageBox>>,
     ) -> Result<HttpResponse, ApiError> {
-        Ok(match data.validator_handle.validate(body).await {
+        Ok(match data.queue.handle(body).await? {
             Some(response) => HttpResponse::Ok().body(response),
             None => HttpResponse::Ok().finish(),
         })

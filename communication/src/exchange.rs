@@ -1,15 +1,17 @@
-use said::{sad::SerializationFormats, derivation::HashFunction};
+use crate::{GenericEvent, Version};
+use said::{derivation::HashFunction, sad::SerializationFormats};
 use serde::{Deserialize, Serialize};
-use crate::{error::Error, Version, GenericEvent};
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
 #[serde(rename_all = "lowercase")]
 enum ExchangeType {
-	Exn
+    Exn,
 }
 
 #[derive(Deserialize, Serialize)]
-pub struct ExchangeMessage<V: Version + Serialize + Clone, D: Serialize + Clone>(GenericEvent<V, ExchangeType, D>);
+pub struct ExchangeMessage<V: Version + Serialize + Clone, D: Serialize + Clone>(
+    GenericEvent<V, ExchangeType, D>,
+);
 
 impl<V: Version + Serialize + Clone, D: Serialize + Clone> ExchangeMessage<V, D> {
     pub fn new(format: SerializationFormats, derivation: HashFunction, route: D) -> Self {
@@ -25,5 +27,3 @@ impl<V: Version + Serialize + Clone, D: Serialize + Clone> ExchangeMessage<V, D>
         String::from_utf8(self.0.encode().unwrap()).unwrap()
     }
 }
-
-

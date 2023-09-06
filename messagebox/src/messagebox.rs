@@ -10,7 +10,8 @@ use keri::{
 };
 
 use crate::{
-    notifier::NotifyHandle, oobis::OobiHandle, storage::StorageHandle, validate::ValidateHandle,
+    notifier::NotifyHandle, oobis::OobiHandle, queue::QueueHandle, storage::StorageHandle,
+    validate::ValidateHandle,
 };
 
 #[derive(Clone)]
@@ -18,8 +19,8 @@ pub struct MessageBox {
     signer: Arc<Signer>,
     pub identifier: BasicPrefix,
     pub public_address: url::Url,
+    pub queue: QueueHandle,
     pub oobi_handle: OobiHandle,
-    pub validator_handle: ValidateHandle,
 }
 
 impl MessageBox {
@@ -62,12 +63,13 @@ impl MessageBox {
         let oobi_handle = OobiHandle::new(oobi_path);
         oobi_handle.register(vec![signed_reply]).await;
         let validator_handle = ValidateHandle::new(storage_handle.clone(), notify_handle);
+        let queue = QueueHandle::new(validator_handle);
         Ok(Self {
             public_address: address,
             signer,
             identifier: id,
             oobi_handle,
-            validator_handle,
+            queue,
         })
     }
 

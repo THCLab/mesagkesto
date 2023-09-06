@@ -34,40 +34,22 @@ async fn test_validation() -> Result<(), Error> {
     .await
     .unwrap();
 
-    messagebox.validator_handle.validate(reg.to_string()).await;
-    messagebox
-        .validator_handle
-        .validate(exchange.to_string())
-        .await;
-    messagebox
-        .validator_handle
-        .validate(exchange1.to_string())
-        .await;
-    messagebox
-        .validator_handle
-        .validate(exchange2.to_string())
-        .await;
-    let res = messagebox
-        .validator_handle
-        .validate(query.to_string())
-        .await;
+    messagebox.queue.handle(reg.to_string()).await?;
+    messagebox.queue.handle(exchange.to_string()).await?;
+    messagebox.queue.handle(exchange1.to_string()).await?;
+    messagebox.queue.handle(exchange2.to_string()).await?;
+    let res = messagebox.queue.handle(query.to_string()).await.unwrap();
     assert_eq!(
         res.unwrap(),
         "{\"last_sn\":2,\"messages\":\"saved0saved1saved2\"}"
     );
 
     let query = query_by_sn("Identifier".to_string(), 2);
-    let res = messagebox
-        .validator_handle
-        .validate(query.to_string())
-        .await;
+    let res = messagebox.queue.handle(query.to_string()).await.unwrap();
     assert_eq!(res.unwrap(), "{\"last_sn\":2,\"messages\":\"saved2\"}");
 
     let query = query_by_sn("Identifier".to_string(), 4);
-    let res = messagebox
-        .validator_handle
-        .validate(query.to_string())
-        .await;
+    let res = messagebox.queue.handle(query.to_string()).await.unwrap();
     assert_eq!(res, None);
 
     let digest_algo: HashFunction = (HashFunctionCode::Blake3_256).into();
@@ -77,7 +59,7 @@ async fn test_validation() -> Result<(), Error> {
     let query_by_digest = serde_json::to_string(&qry).unwrap();
     dbg!(query_by_digest);
 
-    let res = messagebox.validator_handle.validate(qry.to_string()).await;
+    let res = messagebox.queue.handle(qry.to_string()).await.unwrap();
     assert_eq!(res, Some("saved0saved1".to_string()));
 
     Ok(())
