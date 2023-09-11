@@ -13,22 +13,22 @@ class Mesagkesto {
           : DynamicLibrary.open(path);
   static final api = BindingsImpl(dylib);
 
-  Future<String> registerToken(
+  static Future<String> registerToken(
       {required String id, required String token, dynamic hint}) async {
     return await api.registerToken(id: id, token: token);
   }
 
-  Future<String> forwardMessage(
+  static Future<String> forwardMessage(
       {required String receiverId, required String data, dynamic hint}) async {
     return await api.forwardMessage(receiverId: receiverId, data: data);
   }
 
-  Future<String> queryBySn(
+  static Future<String> queryBySn(
       {required String receiverId, required int sn, dynamic hint}) async {
     return await api.queryBySn(receiverId: receiverId, sn: sn);
   }
 
-  Future<String> queryByDigest(
+  static Future<String> queryByDigest(
       {required String receiverId,
       required List<String> digests,
       dynamic hint}) async {
