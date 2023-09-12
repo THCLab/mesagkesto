@@ -14,6 +14,10 @@ use crate::validate::MessageType;
 pub enum MessageboxError {
     #[error("Can't communicate to cread agent: {0}")]
     Communication(String),
+    #[error("Unknown message format: {0}")]
+    UnknownMessage(String),
+    #[error("Actor task has been killed")]
+    KilledSender,
 }
 
 pub fn register_token(id: String, token: String) -> MessageType {

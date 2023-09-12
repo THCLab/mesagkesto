@@ -2,7 +2,7 @@ use said::derivation::{HashFunction, HashFunctionCode};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 
-use crate::{notifier::NotifyHandle, storage::StorageHandle};
+use crate::{notifier::NotifyHandle, storage::StorageHandle, MessageboxError};
 
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "t")]
@@ -46,7 +46,7 @@ pub enum ValidateMessage {
     Authenticate {
         message: String,
         // where to return result
-        sender: oneshot::Sender<Option<String>>,
+        sender: oneshot::Sender<Result<Option<String>, MessageboxError>>,
     },
 }
 
@@ -72,38 +72,37 @@ impl ValidateActor {
     async fn handle_message(&mut self, msg: ValidateMessage) {
         match msg {
             ValidateMessage::Authenticate { message, sender } => {
-                let parsed: MessageType = serde_json::from_str(&message).unwrap();
-                let out = match parsed {
-                    MessageType::Qry(qry) => match qry {
-                        QueryArguments::ByDigest { i, d } => {
-                            println!("Getting messages by digest {:?}", &d);
-                            self.storage.get_by_digest(&i, d).await
-                        }
-                        QueryArguments::BySn { i, s } => {
-                            println!("Getting messages for {} from index {}", &i, s);
-                            self.storage.get_by_index(&i, s).await
-                        }
-                    },
-                    MessageType::Exn(exn) => match exn {
-                        ExchangeArguments::Fwd { i, a } => {
-                            println!("Saving message {} for {}", &a, &i);
-                            let digest_algo: HashFunction = (HashFunctionCode::Blake3_256).into();
-                            let sai = digest_algo.derive(a.as_bytes()).to_string();
-                            self.storage.save(i.clone(), a, sai).await.to_string();
-                            None
-                        }
-                        ExchangeArguments::SetFirebase { i, f: t } => {
-                            self.notify.save_token(i, t).await;
-                            None
-                        }
-                    },
-                };
-
-                // The `let _ =` ignores any errors when sending.
-                //
-                // This can happen if the `select!` macro is used
-                // to cancel waiting for the response.
-                let _ = sender.send(out);
+                if let Ok(parsed) = serde_json::from_str::<MessageType>(&message) {
+                    let out = match parsed {
+                        MessageType::Qry(qry) => match qry {
+                            QueryArguments::ByDigest { i, d } => {
+                                println!("Getting messages by digest {:?}", &d);
+                                self.storage.get_by_digest(&i, d).await
+                            }
+                            QueryArguments::BySn { i, s } => {
+                                println!("Getting messages for {} from index {}", &i, s);
+                                self.storage.get_by_index(&i, s).await
+                            }
+                        },
+                        MessageType::Exn(exn) => match exn {
+                            ExchangeArguments::Fwd { i, a } => {
+                                println!("Saving message {} for {}", &a, &i);
+                                let digest_algo: HashFunction =
+                                    (HashFunctionCode::Blake3_256).into();
+                                let sai = digest_algo.derive(a.as_bytes()).to_string();
+                                self.storage.save(i.clone(), a, sai).await.to_string();
+                                None
+                            }
+                            ExchangeArguments::SetFirebase { i, f: t } => {
+                                self.notify.save_token(i, t).await;
+                                None
+                            }
+                        },
+                    };
+                    let _ = sender.send(Ok(out));
+                } else {
+                    let _ = sender.send(Err(MessageboxError::UnknownMessage(message.clone())));
+                }
             }
         }
     }
@@ -111,7 +110,7 @@ impl ValidateActor {
 
 async fn run_my_actor(mut actor: ValidateActor) {
     while let Some(msg) = actor.receiver.recv().await {
-        actor.handle_message(msg).await;
+        actor.handle_message(msg).await
     }
 }
 
@@ -131,7 +130,7 @@ impl ValidateHandle {
         }
     }
 
-    pub async fn validate(&self, message: String) -> Option<String> {
+    pub async fn validate(&self, message: String) -> Result<Option<String>, MessageboxError> {
         let (send, recv) = oneshot::channel();
         let msg = ValidateMessage::Authenticate {
             message,
@@ -142,6 +141,12 @@ impl ValidateHandle {
         // recv.await below. There's no reason to check for the
         // same failure twice.
         let _ = self.validate_sender.send(msg).await;
-        recv.await.expect("Actor task has been killed")
+        match recv.await {
+            Ok(res) => res,
+            Err(_) => {
+                println!("Actor task has been killed");
+                Err(MessageboxError::KilledSender)
+            }
+        }
     }
 }

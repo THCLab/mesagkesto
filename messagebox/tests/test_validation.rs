@@ -1,7 +1,6 @@
 use anyhow::Error;
 use messagebox::{
     forward_message, messagebox::MessageBox, query_by_digest, query_by_sn, register_token,
-    validate::MessageType,
 };
 use said::derivation::{HashFunction, HashFunctionCode};
 use tempfile::Builder;
@@ -35,25 +34,28 @@ async fn test_validation() -> Result<(), Error> {
     .await
     .unwrap();
 
-    messagebox.validator_handle.validate(reg.to_string()).await;
+    messagebox
+        .validator_handle
+        .validate(reg.to_string())
+        .await?;
     messagebox
         .validator_handle
         .validate(exchange.to_string())
-        .await;
+        .await?;
     messagebox
         .validator_handle
         .validate(exchange1.to_string())
-        .await;
+        .await?;
     messagebox
         .validator_handle
         .validate(exchange2.to_string())
-        .await;
+        .await?;
     let res = messagebox
         .validator_handle
         .validate(query.to_string())
         .await;
     assert_eq!(
-        res.unwrap(),
+        res?.unwrap(),
         "{\"last_sn\":2,\"messages\":[\"saved0\",\"saved1\",\"saved2\"]}"
     );
 
@@ -62,14 +64,14 @@ async fn test_validation() -> Result<(), Error> {
         .validator_handle
         .validate(query.to_string())
         .await;
-    assert_eq!(res.unwrap(), "{\"last_sn\":2,\"messages\":[\"saved2\"]}");
+    assert_eq!(res?.unwrap(), "{\"last_sn\":2,\"messages\":[\"saved2\"]}");
 
     let query = query_by_sn("Identifier".to_string(), 4);
     let res = messagebox
         .validator_handle
         .validate(query.to_string())
         .await;
-    assert_eq!(res, None);
+    assert_eq!(res?, None);
 
     let digest_algo: HashFunction = (HashFunctionCode::Blake3_256).into();
     let sai0 = digest_algo.derive("saved0".as_bytes()).to_string();
@@ -79,7 +81,7 @@ async fn test_validation() -> Result<(), Error> {
     dbg!(query_by_digest);
 
     let res = messagebox.validator_handle.validate(qry.to_string()).await;
-    assert_eq!(res, Some("[\"saved0\",\"saved1\"]".to_string()));
+    assert_eq!(res?, Some("[\"saved0\",\"saved1\"]".to_string()));
 
     Ok(())
 }

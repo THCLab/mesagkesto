@@ -111,8 +111,13 @@ mod http_handlers {
         data: web::Data<Arc<MessageBox>>,
     ) -> Result<HttpResponse, ApiError> {
         Ok(match data.validator_handle.validate(body).await {
-            Some(response) => HttpResponse::Ok().body(response),
-            None => HttpResponse::Ok().finish(),
+            Ok(Some(response)) => HttpResponse::Ok().body(response),
+            Ok(None) => HttpResponse::Ok().finish(),
+            Err(err) => {
+                let message = format!("Message ignored due to error: {}", &err);
+                println!("{}", &message);
+                HttpResponse::BadRequest().body(message)
+            }
         })
     }
 

@@ -51,7 +51,7 @@ impl NotifyActor {
                             .unwrap();
                         println!("Notifying token {}, res: {:?}", token, res);
                     }
-                    None => todo!(),
+                    None => (),
                 };
             }
             NotifyMessage::SaveToken { identifier, token } => {
