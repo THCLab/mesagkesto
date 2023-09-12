@@ -5,11 +5,13 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::notifier::NotifyHandle;
 
+pub type Message = serde_json::Value;
+
 pub enum StorageMessage {
     SaveMessage {
         key: String,
         digest: String,
-        message: String,
+        message: Message,
         // where to return result
         sender: oneshot::Sender<u32>,
     },
@@ -29,7 +31,7 @@ pub enum StorageMessage {
 pub struct StorageActor {
     // From where get messages
     receiver: mpsc::Receiver<StorageMessage>,
-    messages: HashMap<String, Vec<(String, String)>>,
+    messages: HashMap<String, Vec<(String, Message)>>,
     notify_handle: NotifyHandle,
 }
 
@@ -70,10 +72,7 @@ impl StorageActor {
                     Some(crud) => {
                         let last_id = crud.len() - 1;
                         let out = crud.get(index..).map(|el| {
-                            let messages = el
-                                .iter()
-                                .map(|(_digest, msg)| msg)
-                                .fold(String::new(), |a, b| a + b);
+                            let messages = el.iter().map(|(_digest, msg)| msg).collect::<Vec<_>>();
                             json!({"last_sn":last_id,"messages":messages}).to_string()
                         });
                         let _ = sender.send(out);
@@ -98,9 +97,9 @@ impl StorageActor {
                                 None
                             }
                         })
-                        .fold(String::new(), |a, b| a + &b);
+                        .collect::<Vec<_>>();
 
-                    let _ = sender.send(Some(out));
+                    let _ = sender.send(serde_json::to_string(&out).ok());
                 }
                 None => {
                     let _ = sender.send(None);
@@ -137,7 +136,7 @@ impl StorageHandle {
         let msg = StorageMessage::SaveMessage {
             key,
             digest,
-            message: value,
+            message: json!(value),
             sender: send,
         };
 

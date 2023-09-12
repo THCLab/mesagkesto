@@ -54,7 +54,7 @@ async fn test_validation() -> Result<(), Error> {
         .await;
     assert_eq!(
         res.unwrap(),
-        "{\"last_sn\":2,\"messages\":\"saved0saved1saved2\"}"
+        "{\"last_sn\":2,\"messages\":[\"saved0\",\"saved1\",\"saved2\"]}"
     );
 
     let query = query_by_sn("Identifier".to_string(), 2);
@@ -62,7 +62,7 @@ async fn test_validation() -> Result<(), Error> {
         .validator_handle
         .validate(query.to_string())
         .await;
-    assert_eq!(res.unwrap(), "{\"last_sn\":2,\"messages\":\"saved2\"}");
+    assert_eq!(res.unwrap(), "{\"last_sn\":2,\"messages\":[\"saved2\"]}");
 
     let query = query_by_sn("Identifier".to_string(), 4);
     let res = messagebox
@@ -79,7 +79,7 @@ async fn test_validation() -> Result<(), Error> {
     dbg!(query_by_digest);
 
     let res = messagebox.validator_handle.validate(qry.to_string()).await;
-    assert_eq!(res, Some("saved0saved1".to_string()));
+    assert_eq!(res, Some("[\"saved0\",\"saved1\"]".to_string()));
 
     Ok(())
 }
