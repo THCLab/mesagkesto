@@ -40,7 +40,8 @@ impl NotifyActor {
                         "data": {
                             "click_action": "FLUTTER_NOTIFICATION_CLICK",
                             "id": "1",
-                            "status": "done"
+                            "status": "done",
+                            "body": {"d": digest, "i": identifier},
                         },
                         "to": token,
                         });
