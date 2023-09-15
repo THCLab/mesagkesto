@@ -81,7 +81,7 @@ async fn run_my_actor(mut actor: OobiActor) {
 
 #[derive(Clone)]
 pub struct OobiHandle {
-    database_sender: mpsc::Sender<OobiMessage>,
+    oobi_sender: mpsc::Sender<OobiMessage>,
 }
 
 impl OobiHandle {
@@ -91,7 +91,7 @@ impl OobiHandle {
         tokio::spawn(run_my_actor(actor));
 
         Self {
-            database_sender: sender,
+            oobi_sender: sender,
         }
     }
 
@@ -105,7 +105,7 @@ impl OobiHandle {
         // Ignore send errors. If this send fails, so does the
         // recv.await below. There's no reason to check for the
         // same failure twice.
-        let _ = self.database_sender.send(msg).await;
+        let _ = self.oobi_sender.send(msg).await;
         recv.await.expect("Actor task has been killed")
     }
 
@@ -119,7 +119,7 @@ impl OobiHandle {
         // Ignore send errors. If this send fails, so does the
         // recv.await below. There's no reason to check for the
         // same failure twice.
-        let _ = self.database_sender.send(msg).await;
+        let _ = self.oobi_sender.send(msg).await;
         Some(recv.await.expect("Actor task has been killed"))
     }
 
@@ -140,7 +140,7 @@ impl OobiHandle {
         // Ignore send errors. If this send fails, so does the
         // recv.await below. There's no reason to check for the
         // same failure twice.
-        let _ = self.database_sender.send(msg).await;
+        let _ = self.oobi_sender.send(msg).await;
         Some(recv.await.expect("Actor task has been killed"))
     }
 }

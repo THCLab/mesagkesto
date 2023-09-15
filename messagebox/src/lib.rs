@@ -1,3 +1,4 @@
+use controller::IdentifierPrefix;
 use thiserror::Error;
 use url::Url;
 use validate::ExchangeArguments;
@@ -8,6 +9,7 @@ pub mod notifier;
 pub mod oobis;
 pub mod storage;
 pub mod validate;
+pub mod verify;
 use crate::validate::MessageType;
 
 #[derive(Error, Debug)]
@@ -18,6 +20,15 @@ pub enum MessageboxError {
     UnknownMessage(String),
     #[error("Actor task has been killed")]
     KilledSender,
+    #[error("Keri error")]
+    Keri,
+    #[error("Verification failed")]
+    VerificationFailure,
+    #[error("Kel event not in database")]
+    MissingEvent(IdentifierPrefix),
+    #[error("Missing oobi")]
+    MissingOobi,
+
 }
 
 pub fn register_token(id: String, token: String) -> MessageType {
