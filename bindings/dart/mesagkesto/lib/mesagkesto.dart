@@ -4,7 +4,7 @@ import 'dart:io';
 import 'bridge_generated.dart';
 
 class Mesagkesto {
-  static const base = 'bindings';
+  static const base = 'dartmesagkesto';
   static final path = Platform.isWindows ? '$base.dll' : 'lib$base.so';
   static final dylib = Platform.isIOS
       ? DynamicLibrary.process()

@@ -1,6 +1,6 @@
 name: mesagkesto
-description: Connecting people and machines - bindings for Android.
-version: 0.0.1
+description: Connecting people and machines - bindings for messagebox for Android.
+version: 0.1.0
 homepage: https://github.com/argonAUTHs/mesagkesto
 
 environment:
@@ -11,7 +11,7 @@ dependencies:
   ffi: ^2.0.1
   flutter:
     sdk: flutter
-  flutter_rust_bridge: ^1.81.0
+  flutter_rust_bridge: ^1.82.1
   meta: ^1.9.1
   plugin_platform_interface: ^2.0.2
   uuid: ^3.0.7
