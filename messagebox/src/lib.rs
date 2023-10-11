@@ -1,4 +1,5 @@
 use controller::IdentifierPrefix;
+use keri::actor::prelude::SelfAddressingIdentifier;
 use thiserror::Error;
 use url::Url;
 use validate::ExchangeArguments;
@@ -25,7 +26,7 @@ pub enum MessageboxError {
     #[error("Verification failed")]
     VerificationFailure,
     #[error("Kel event not in database")]
-    MissingEvent(IdentifierPrefix),
+    MissingEvent(IdentifierPrefix, SelfAddressingIdentifier),
     #[error("Missing oobi")]
     MissingOobi,
 }
