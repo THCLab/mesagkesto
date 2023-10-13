@@ -1,5 +1,6 @@
 mod reverify;
 mod watcher_communication;
+mod signer;
 
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
@@ -19,7 +20,7 @@ use tokio::{sync::{mpsc, oneshot}, time::sleep};
 
 use crate::MessageboxError;
 
-use self::reverify::ReverifyHandle;
+use self::{reverify::ReverifyHandle, signer::SignerHandle};
 
 #[derive(Debug)]
 pub enum VerifyMessage {
@@ -33,6 +34,10 @@ pub enum VerifyMessage {
         // where to return result
         sender: oneshot::Sender<Result<bool, MessageboxError>>,
     },
+    Update {
+        id: IdentifierPrefix,
+        kel: Vec<u8>,
+    },
     
 }
 
@@ -41,7 +46,7 @@ pub struct VerifyActor {
     receiver: mpsc::Receiver<VerifyMessage>,
     controller: IdentifierController,
     identifier: BasicPrefix,
-    signer: Arc<Signer>,
+    signer: SignerHandle,
     witnesses: HashMap<IdentifierPrefix, Vec<BasicPrefix>>,
     reverify: ReverifyHandle,
 }
@@ -58,8 +63,9 @@ impl VerifyActor {
                 .unwrap_or_else(|| Ok(Signer::new()))
                 .unwrap(),
         );
+        let signer = SignerHandle::new();
 
-        let identifier = BasicPrefix::Ed25519(signer.public_key());
+        let identifier = signer.public_key().await?;
         let controller = Arc::new(
             Controller::new(ControllerConfig {
                 db_path: db_path.into(),
@@ -79,20 +85,20 @@ impl VerifyActor {
             .add_watcher(watcher_oobi.eid)
             .map_err(|e| MessageboxError::Keri)?;
         let signature = signer
-            .sign(end_role.as_bytes())
+            .sign(end_role.clone())
+            .await
             .map_err(|e| MessageboxError::Keri)?;
-        let signature = SelfSigningPrefix::Ed25519Sha512(signature);
 
         id.finalize_event(end_role.as_bytes(), signature)
             .await
             .unwrap();
         Ok(VerifyActor {
             identifier,
-            signer,
+            signer: signer.clone(),
             receiver,
             controller: id,
             witnesses: HashMap::new(),
-            reverify: ReverifyHandle::new(),
+            reverify: ReverifyHandle::new(signer),
         })
     }
 
@@ -163,34 +169,25 @@ impl VerifyActor {
             .unwrap_or(false)
     }
 
-    async fn ask_watcher(&mut self, id:&IdentifierPrefix) {
+    async fn ask_watcher(&mut self, id: &IdentifierPrefix) {
         // Ask watcher
-        let query: Vec<(QueryEvent, SelfSigningPrefix)> = self.controller.query_own_watchers(id).unwrap()
-            .iter()
-            .map(|qry| {
-                let signature = self.signer.sign(qry.encode().unwrap()).unwrap();
-                let ssp = SelfSigningPrefix::Ed25519Sha512(signature);
-                (qry.clone(), ssp)
-            }).collect();
-        println!("\nwatcher query: {:?}", &query);
-
-        let rr = self.controller.finalize_query(query.clone()).await;
-        let rr = match rr {
-            Ok(rr) => rr,
-            Err(e) => match e {
-                ControllerError::DatabaseError(_) => todo!(),
-                ControllerError::TransportError(TransportError::ResponseNotReady) => {
-                    sleep(Duration::from_secs(10)).await;
-                    self.controller.finalize_query(query).await.unwrap()
-                },
-                _ => todo!()
-            },
+        let mut query = vec![];
+        
+        for qry in self.controller.query_own_watchers(&id).unwrap() {
+             let ssp = self.signer.sign(String::from_utf8(qry.encode().unwrap()).unwrap()).await.unwrap();
+            query.push((qry.clone(), ssp));
         };
-        let state = self.controller.source.get_state(&id);
-        println!("\nid: {:?}", &id);
-        println!("\nstate here: {:?}", state);
 
-        println!("\nwatcher res: {:?}", rr);
+        let mut query_result = self.controller.finalize_query(query).await;
+        while matches!(query_result, Err(ControllerError::TransportError(TransportError::ResponseNotReady))) {
+            sleep(Duration::from_secs(3)).await;
+            let mut query = vec![];
+                for qry in self.controller.query_own_watchers(&id).unwrap() {
+                let ssp = self.signer.sign(String::from_utf8(qry.encode().unwrap()).unwrap()).await.unwrap();
+                query.push((qry.clone(), ssp));
+            };
+            query_result = self.controller.finalize_query(query).await
+        };
     }
 
     async fn handle_message(&mut self, msg: VerifyMessage) {
@@ -207,9 +204,10 @@ impl VerifyActor {
                     }
                     Err(MessageboxError::MissingEvent(id, said)) => {
                         if self.has_oobi(&id) {
-                            self.reverify.save(said.clone(), message).await.unwrap();
+                            self.reverify.save(said.clone(), message.clone()).await.unwrap();
                             // Ask watcher
                             self.ask_watcher(&id).await;
+                            self.reverify.save(said.clone(), message).await.unwrap();
                             let _ = sender.send(Err(MessageboxError::MissingEvent(id, said)));
                         } else {
                             let _ = sender.send(Err(MessageboxError::MissingOobi));
@@ -276,8 +274,8 @@ pub struct VerifyHandle {
 impl VerifyHandle {
     pub async fn new() -> Self {
         let (sender, receiver) = mpsc::channel(8);
-        // let watcher_oobi = serde_json::from_str(r#"{"eid":"BF2t2NPc1bwptY1hYV0YCib1JjQ11k9jtuaZemecPF5b","scheme":"http","url":"http://watcher.sandbox.argo.colossi.network/"}"#).unwrap();
-        let watcher_oobi = serde_json::from_str(r#"{"eid":"BF2t2NPc1bwptY1hYV0YCib1JjQ11k9jtuaZemecPF5b","scheme":"http","url":"http://localhost:3236/"}"#).unwrap();
+        let watcher_oobi = serde_json::from_str(r#"{"eid":"BF2t2NPc1bwptY1hYV0YCib1JjQ11k9jtuaZemecPF5b","scheme":"http","url":"http://watcher.sandbox.argo.colossi.network/"}"#).unwrap();
+        // let watcher_oobi = serde_json::from_str(r#"{"eid":"BF2t2NPc1bwptY1hYV0YCib1JjQ11k9jtuaZemecPF5b","scheme":"http","url":"http://localhost:3236/"}"#).unwrap();
         let actor = VerifyActor::setup("./bb", watcher_oobi, None, receiver)
             .await
             .unwrap();
@@ -331,8 +329,8 @@ impl VerifyHandle {
 async fn test_verify_handle() {
     let cont = Arc::new(Controller::new(ControllerConfig::default()).unwrap());
     let mut km1 = CryptoBox::new().unwrap();
-    // let witness_oobi: LocationScheme = serde_json::from_str(r#"{"eid":"BJq7UABlttINuWJh1Xl2lkqZG4NTdUdqnbFJDa6ZyxCC","scheme":"http","url":"http://witness1.sandbox.argo.colossi.network/"}"#).unwrap();
-    let witness_oobi_st = r#"{"eid":"BJq7UABlttINuWJh1Xl2lkqZG4NTdUdqnbFJDa6ZyxCC","scheme":"http","url":"http://localhost:3232/"}"#;
+    let witness_oobi_st = r#"{"eid":"BJq7UABlttINuWJh1Xl2lkqZG4NTdUdqnbFJDa6ZyxCC","scheme":"http","url":"http://witness1.sandbox.argo.colossi.network/"}"#;
+    // let witness_oobi_st = r#"{"eid":"BJq7UABlttINuWJh1Xl2lkqZG4NTdUdqnbFJDa6ZyxCC","scheme":"http","url":"http://localhost:3232/"}"#;
     let witness_oobi: LocationScheme = serde_json::from_str(witness_oobi_st).unwrap();
     let witness_id: BasicPrefix = "BJq7UABlttINuWJh1Xl2lkqZG4NTdUdqnbFJDa6ZyxCC"
         .parse()
@@ -395,7 +393,7 @@ async fn test_verify_handle() {
     vh.resolve_oobi(oobi_str.clone()).await.unwrap();
 
     let r = vh.verify(&s).await.unwrap();
-    println!("r: {}", r);
+    assert!(r);
 
     // Rotate identifier and try to verify again
     km1.rotate().unwrap();

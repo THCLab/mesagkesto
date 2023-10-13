@@ -5,6 +5,8 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::MessageboxError;
 
+use super::signer::SignerHandle;
+
 #[derive(Debug)]
 pub enum ReverifyMessage {
     Save {
@@ -15,6 +17,7 @@ pub enum ReverifyMessage {
 
 
 pub struct ReverifyActor {
+    signer: SignerHandle,
     reverify_dict: HashMap<SelfAddressingIdentifier, String>,
     // From where get messages
     receiver: mpsc::Receiver<ReverifyMessage>,
@@ -22,9 +25,11 @@ pub struct ReverifyActor {
 
 impl ReverifyActor {
     fn new(
+        signer: SignerHandle,
         receiver: mpsc::Receiver<ReverifyMessage>,
     ) -> Self {
         ReverifyActor {
+            signer,
             reverify_dict: HashMap::new(),
             receiver,
         }
@@ -32,7 +37,7 @@ impl ReverifyActor {
     async fn handle_message(&mut self, msg: ReverifyMessage) {
         match msg {
             ReverifyMessage::Save { digest, message } => {
-                println!("Saving: {}", &message);
+                println!("Saving to verify later: {}", &message);
                 self.reverify_dict.insert(digest, message);
             },
         }
@@ -51,9 +56,9 @@ pub struct ReverifyHandle {
 }
 
 impl ReverifyHandle {
-    pub fn new() -> Self {
+    pub fn new(signer: SignerHandle) -> Self {
         let (sender, receiver) = mpsc::channel(8);
-        let actor = ReverifyActor::new(receiver);
+        let actor = ReverifyActor::new(signer, receiver);
         tokio::spawn(run_my_actor(actor));
 
         Self {
