@@ -1,8 +1,5 @@
-use std::{collections::HashMap, sync::Arc};
-
-use cesrox::primitives::Signature;
-use controller::{SelfSigningPrefix, BasicPrefix};
-use keri::{actor::prelude::SelfAddressingIdentifier, signer::Signer};
+use controller::{BasicPrefix, SelfSigningPrefix};
+use keri::{signer::Signer, error::Error};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::MessageboxError;
@@ -10,25 +7,22 @@ use crate::MessageboxError;
 #[derive(Debug)]
 pub enum SignerMessage {
     Sign {
-		data: String,
-		 sender: oneshot::Sender<SelfSigningPrefix>,
+        data: String,
+        sender: oneshot::Sender<Result<SelfSigningPrefix, Error>>,
     },
-	PublicKey {
-		 sender: oneshot::Sender<BasicPrefix>,
-	},
+    PublicKey {
+        sender: oneshot::Sender<BasicPrefix>,
+    },
 }
 
-
 pub struct SignerActor {
-	signer: Signer,
+    signer: Signer,
     // From where get messages
     receiver: mpsc::Receiver<SignerMessage>,
 }
 
 impl SignerActor {
-    fn new(
-        receiver: mpsc::Receiver<SignerMessage>,
-    ) -> Self {
+    fn new(receiver: mpsc::Receiver<SignerMessage>) -> Self {
         SignerActor {
             signer: Signer::new(),
             receiver,
@@ -36,11 +30,15 @@ impl SignerActor {
     }
     async fn handle_message(&mut self, msg: SignerMessage) {
         match msg {
-            SignerMessage::Sign { data, sender} => {
-				let signature = self.signer.sign(data.as_bytes());
-				todo!();
-            },
-            SignerMessage::PublicKey {sender} => todo!(),
+            SignerMessage::Sign { data, sender } => {
+                let signature = self.signer.sign(data.as_bytes()).map(|signature| SelfSigningPrefix::Ed25519Sha512(signature));
+                sender
+                    .send(signature);
+            }
+            SignerMessage::PublicKey { sender } => {
+                sender
+                    .send(BasicPrefix::Ed25519NT(self.signer.public_key()));
+            }
         }
     }
 }
@@ -69,16 +67,19 @@ impl SignerHandle {
 
     pub async fn sign(&self, message: String) -> Result<SelfSigningPrefix, MessageboxError> {
         let (send, recv) = oneshot::channel();
-        let msg = SignerMessage::Sign { data: message, sender: send };
+        let msg = SignerMessage::Sign {
+            data: message,
+            sender: send,
+        };
 
         // Ignore send errors. If this send fails, so does the
         // recv.await below. There's no reason to check for the
         // same failure twice.
         let _ = self.validate_sender.send(msg).await;
-		Ok(recv.await.expect("Err"))
+        recv.await.expect("Err").map_err(|_e| MessageboxError::Keri)
     }
 
-	pub async fn public_key(&self) -> Result<BasicPrefix, MessageboxError> {
+    pub async fn public_key(&self) -> Result<BasicPrefix, MessageboxError> {
         let (send, recv) = oneshot::channel();
         let msg = SignerMessage::PublicKey { sender: send };
 
@@ -86,6 +87,6 @@ impl SignerHandle {
         // recv.await below. There's no reason to check for the
         // same failure twice.
         let _ = self.validate_sender.send(msg).await;
-		Ok(recv.await.expect("Err"))
+        Ok(recv.await.expect("Err"))
     }
 }
