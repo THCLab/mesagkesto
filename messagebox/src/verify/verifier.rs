@@ -240,6 +240,43 @@ impl VerifyData {
         }
     }
 
+    async fn handle_oobi(&self, oobi_str: &str) -> Result<(), MessageboxError> {
+        let oobi: Oobi =
+            serde_json::from_str(&oobi_str).map_err(|_| MessageboxError::OobiParsingError)?;
+        // Save witness oobi to be able to check, if we know it already!!!!
+        match &oobi {
+            Oobi::EndRole(EndRole {
+                cid,
+                eid: IdentifierPrefix::Basic(bp),
+                role,
+            }) => {
+                if let Role::Witness = role {
+                    let mut w = self.witnesses.lock().await;
+                    match w.get_mut(cid) {
+                        Some(s) => {
+                            s.push(bp.clone());
+                        }
+                        None => {
+                            w.insert(cid.clone(), vec![bp.clone()]);
+                        }
+                    };
+                };
+            }
+            _ => {}
+        };
+        self.controller
+            .source
+            .resolve_oobi(oobi.clone())
+            .await
+            .map_err(|e| MessageboxError::OobiError(e))?;
+        self.controller
+            .source
+            .send_oobi_to_watcher(&self.controller.id, &oobi)
+            .await
+            .map_err(|e| MessageboxError::OobiError(e))?;
+        Ok(())
+    }
+
     pub async fn handle_message(&self, msg: VerifyMessage) {
         match msg {
             VerifyMessage::Verify {
@@ -252,39 +289,7 @@ impl VerifyData {
                 .await
                 .push_back(VerificationTask::Verify(message, signatures, sender)),
             VerifyMessage::Oobi { message, sender } => {
-                let oobi: Oobi = serde_json::from_str(&message).unwrap();
-                // Save witness oobi to be able to check, if we know it already!!!!
-                match &oobi {
-                    Oobi::EndRole(EndRole {
-                        cid,
-                        eid: IdentifierPrefix::Basic(bp),
-                        role,
-                    }) => {
-                        if let Role::Witness = role {
-                            let mut w = self.witnesses.lock().await;
-                            match w.get_mut(cid) {
-                                Some(s) => {
-                                    s.push(bp.clone());
-                                }
-                                None => {
-                                    w.insert(cid.clone(), vec![bp.clone()]);
-                                }
-                            };
-                        };
-                    }
-                    _ => {}
-                };
-                self.controller
-                    .source
-                    .resolve_oobi(oobi.clone())
-                    .await
-                    .unwrap();
-                self.controller
-                    .source
-                    .send_oobi_to_watcher(&self.controller.id, &oobi)
-                    .await
-                    .unwrap();
-                let _ = sender.send(Ok(true));
+                let _ = sender.send(self.handle_oobi(&message).await);
             }
         }
     }

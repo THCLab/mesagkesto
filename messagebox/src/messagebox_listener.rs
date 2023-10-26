@@ -35,6 +35,10 @@ impl MessageBoxListener {
                     "/",
                     actix_web::web::post().to(http_handlers::process_message),
                 )
+                .route(
+                    "/resolve",
+                    actix_web::web::post().to(http_handlers::resolve_oobi),
+                )
         })
         .bind(addr)
         .unwrap()
@@ -146,6 +150,22 @@ mod http_handlers {
         Ok(HttpResponse::Ok()
             .content_type(ContentType::plaintext())
             .body(()))
+    }
+
+    pub async fn resolve_oobi(
+        body: web::Bytes,
+        data: web::Data<Arc<MessageBox>>,
+    ) -> Result<HttpResponse, ApiError> {
+        println!(
+            "\nGot oobi to resolve: \n{}",
+            String::from_utf8_lossy(&body)
+        );
+
+        data.resolve_oobi(String::from_utf8(body.to_vec()).unwrap())
+            .await
+            .unwrap();
+
+        Ok(HttpResponse::Ok().finish())
     }
 }
 

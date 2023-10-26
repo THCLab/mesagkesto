@@ -1,4 +1,4 @@
-use controller::IdentifierPrefix;
+use controller::{error::ControllerError, IdentifierPrefix};
 use keri::actor::prelude::SelfAddressingIdentifier;
 use thiserror::Error;
 use url::Url;
@@ -34,6 +34,10 @@ pub enum MessageboxError {
     MissingEvent(IdentifierPrefix, SelfAddressingIdentifier),
     #[error("Missing oobi")]
     MissingOobi,
+    #[error("Can't parse oobi")]
+    OobiParsingError,
+    #[error(transparent)]
+    OobiError(ControllerError),
     #[error("Response not ready")]
     ResponseNotReady(SelfAddressingIdentifier),
 }

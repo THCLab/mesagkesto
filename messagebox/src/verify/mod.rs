@@ -27,7 +27,7 @@ pub enum VerifyMessage {
     Oobi {
         message: String,
         // where to return result
-        sender: oneshot::Sender<Result<bool, MessageboxError>>,
+        sender: oneshot::Sender<Result<(), MessageboxError>>,
     },
 }
 
