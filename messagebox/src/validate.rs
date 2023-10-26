@@ -176,20 +176,12 @@ impl ValidateHandle {
         }
     }
 
-    pub async fn process_and_save(&self, message: String) -> Result<(), MessageboxError> {
-        let (send, recv) = oneshot::channel();
+    pub async fn process_and_save(&self, message: String) {
         let msg = ValidateMessage::ProcessAndSave { message };
 
         // Ignore send errors. If this send fails, so does the
         // recv.await below. There's no reason to check for the
         // same failure twice.
         let _ = self.validate_sender.send(msg).await;
-        match recv.await {
-            Ok(res) => res,
-            Err(_) => {
-                println!("Actor task has been killed");
-                Err(MessageboxError::KilledSender)
-            }
-        }
     }
 }

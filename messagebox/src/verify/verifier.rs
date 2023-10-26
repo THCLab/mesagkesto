@@ -13,7 +13,6 @@ use keri::{
     event_message::signature::{Nontransferable, Signature},
     oobi::Role,
     processor::event_storage::EventStorage,
-    signer::Signer,
     transport::TransportError,
 };
 use said::derivation::{HashFunction, HashFunctionCode};
@@ -27,7 +26,6 @@ use super::{
 
 pub(crate) struct VerifyData {
     controller: IdentifierController,
-    identifier: BasicPrefix,
     signer: SignerHandle,
     witnesses: Arc<Mutex<HashMap<IdentifierPrefix, Vec<BasicPrefix>>>>,
     reverify: ReverifyHandle,
@@ -42,21 +40,16 @@ impl VerifyData {
         seed: Option<String>,
         validate_handle: ValidateHandle,
     ) -> Result<Self, MessageboxError> {
-        let signer = Arc::new(
-            seed.map(|key| Signer::new_with_seed(&key.parse()?))
-                .unwrap_or_else(|| Ok(Signer::new()))
-                .unwrap(),
-        );
-        let signer = SignerHandle::new();
+        let signer = match seed {
+            Some(seed) => SignerHandle::new_with_seed(&seed)?,
+            None => SignerHandle::new(),
+        };
 
         let identifier = signer.public_key().await?;
-        let controller = Arc::new(
-            Controller::new(ControllerConfig {
-                db_path: db_path.into(),
-                ..Default::default()
-            })
-            .map_err(|e| MessageboxError::Keri)?,
-        );
+        let controller = Arc::new(Controller::new(ControllerConfig {
+            db_path: db_path.into(),
+            ..Default::default()
+        })?);
         let oobi = controller::Oobi::Location(watcher_oobi.clone());
         controller.resolve_oobi(oobi).await.unwrap();
 
@@ -65,19 +58,13 @@ impl VerifyData {
             controller.clone(),
             None,
         );
-        let end_role = id
-            .add_watcher(watcher_oobi.eid)
-            .map_err(|e| MessageboxError::Keri)?;
-        let signature = signer
-            .sign(end_role.clone())
-            .await
-            .map_err(|e| MessageboxError::Keri)?;
+        let end_role = id.add_watcher(watcher_oobi.eid)?;
+        let signature = signer.sign(end_role.clone()).await?;
 
         id.finalize_event(end_role.as_bytes(), signature)
             .await
             .unwrap();
         Ok(VerifyData {
-            identifier,
             signer: signer.clone(),
             controller: id,
             witnesses: Arc::new(Mutex::new(HashMap::new())),
@@ -125,7 +112,7 @@ impl VerifyData {
                 .iter()
                 .all(|(id, sig)| id.verify(data, &sig).unwrap())),
             Signature::NonTransferable(Nontransferable::Indexed(_sigs)) => {
-                Err(MessageboxError::Keri)
+                todo!()
             }
         }
     }
@@ -213,7 +200,7 @@ impl VerifyData {
                     Err(MessageboxError::VerificationFailure)
                 }
             }
-            Err(MessageboxError::MissingEvent(id, said)) => {
+            Err(MessageboxError::MissingEvent(id, _said)) => {
                 if self.has_oobi(&id).await {
                     self.reverify
                         .save(id.clone(), message.to_string(), signatures)
@@ -311,10 +298,7 @@ impl VerifyData {
                         let (data, signatures) = self.reverify.get(id.clone()).await.unwrap();
                         let message = String::from_utf8(data).unwrap();
                         self.verify_message(&message, signatures).await.unwrap();
-                        self.validate_handle
-                            .process_and_save(message)
-                            .await
-                            .unwrap();
+                        self.validate_handle.process_and_save(message).await;
                     }
                 };
             }

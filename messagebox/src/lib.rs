@@ -23,8 +23,10 @@ pub enum MessageboxError {
     UnknownMessage(String),
     #[error("Actor task has been killed")]
     KilledSender,
-    #[error("Keri error")]
-    Keri,
+    #[error(transparent)]
+    Controller(#[from] ControllerError),
+    #[error(transparent)]
+    Keri(#[from] keri::error::Error),
     #[error("Verification failed")]
     VerificationFailure,
     #[error("Kel event not in database")]
@@ -33,6 +35,8 @@ pub enum MessageboxError {
     MissingOobi,
     #[error("Can't parse oobi")]
     OobiParsingError,
+    #[error("Can't parse seed")]
+    SeedParsingError,
     #[error(transparent)]
     OobiError(ControllerError),
     #[error("Response not ready")]

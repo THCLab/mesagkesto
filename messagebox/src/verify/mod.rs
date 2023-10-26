@@ -99,7 +99,7 @@ impl VerifyHandle {
 
         let _ = self.validate_sender.send(msg).await;
         match recv.await {
-            Ok(res) => Ok(()),
+            Ok(res) => res,
             Err(_) => {
                 println!("Actor task has been killed");
                 Err(MessageboxError::KilledSender)

@@ -28,6 +28,20 @@ impl SignerActor {
             receiver,
         }
     }
+
+    fn new_with_seed(
+        seed: &str,
+        receiver: mpsc::Receiver<SignerMessage>,
+    ) -> Result<Self, MessageboxError> {
+        let signer = Signer::new_with_seed(
+            &seed
+                .parse()
+                .map_err(|_e| MessageboxError::SeedParsingError)?,
+        )
+        .map_err(|_e| MessageboxError::SeedParsingError)?;
+        Ok(SignerActor { signer, receiver })
+    }
+
     async fn handle_message(&mut self, msg: SignerMessage) {
         match msg {
             SignerMessage::Sign { data, sender } => {
@@ -35,10 +49,10 @@ impl SignerActor {
                     .signer
                     .sign(data.as_bytes())
                     .map(|signature| SelfSigningPrefix::Ed25519Sha512(signature));
-                sender.send(signature);
+                let _ = sender.send(signature);
             }
             SignerMessage::PublicKey { sender } => {
-                sender.send(BasicPrefix::Ed25519NT(self.signer.public_key()));
+                let _ = sender.send(BasicPrefix::Ed25519NT(self.signer.public_key()));
             }
         }
     }
@@ -66,6 +80,16 @@ impl SignerHandle {
         }
     }
 
+    pub fn new_with_seed(seed: &str) -> Result<Self, MessageboxError> {
+        let (sender, receiver) = mpsc::channel(8);
+        let actor = SignerActor::new_with_seed(seed, receiver)?;
+        tokio::spawn(run_my_actor(actor));
+
+        Ok(Self {
+            validate_sender: sender,
+        })
+    }
+
     pub async fn sign(&self, message: String) -> Result<SelfSigningPrefix, MessageboxError> {
         let (send, recv) = oneshot::channel();
         let msg = SignerMessage::Sign {
@@ -77,7 +101,7 @@ impl SignerHandle {
         // recv.await below. There's no reason to check for the
         // same failure twice.
         let _ = self.validate_sender.send(msg).await;
-        recv.await.expect("Err").map_err(|_e| MessageboxError::Keri)
+        Ok(recv.await.expect("Err")?)
     }
 
     pub async fn public_key(&self) -> Result<BasicPrefix, MessageboxError> {
