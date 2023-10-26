@@ -2,7 +2,10 @@
 
 ## Endpoints
 
-- `POST /` - allows users to send `qry` or `exn` message.
+- `POST /` - allows users to send `qry` or `exn` message,
+- `POST /resolve` - allows providing oobi of identifier, to be able to verify its signature,
+- `GET /messages/<said>` - enable checking the message processing status by senders.
+
 
 Oobi specific endpoints:
 - `GET /introduce` - returns messagebox contact information - identifier and address in form of oobi,
