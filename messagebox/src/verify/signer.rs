@@ -1,5 +1,5 @@
 use controller::{BasicPrefix, SelfSigningPrefix};
-use keri::{signer::Signer, error::Error};
+use keri::{error::Error, signer::Signer};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::MessageboxError;
@@ -31,13 +31,14 @@ impl SignerActor {
     async fn handle_message(&mut self, msg: SignerMessage) {
         match msg {
             SignerMessage::Sign { data, sender } => {
-                let signature = self.signer.sign(data.as_bytes()).map(|signature| SelfSigningPrefix::Ed25519Sha512(signature));
-                sender
-                    .send(signature);
+                let signature = self
+                    .signer
+                    .sign(data.as_bytes())
+                    .map(|signature| SelfSigningPrefix::Ed25519Sha512(signature));
+                sender.send(signature);
             }
             SignerMessage::PublicKey { sender } => {
-                sender
-                    .send(BasicPrefix::Ed25519NT(self.signer.public_key()));
+                sender.send(BasicPrefix::Ed25519NT(self.signer.public_key()));
             }
         }
     }

@@ -17,7 +17,7 @@ clap = { version = "4.1.1", features = ["derive"] }
 anyhow = { version = "1.0.56" }
 tokio = {version = "1.29.1", features = ["sync", "rt", "macros", "rt-multi-thread", "time"]}
 ureq = {version = "2.6.2", features = ["json"]}
-said = {git = "https://github.com/THCLab/cesrox"}
+said = {git = "https://github.com/THCLab/cesrox", tag = "v0.1.4"}
 cesrox = { git = "https://github.com/THCLab/cesrox", tag = "v0.1.4", features = ["cesr-proof"]}
 controller = { git = "https://github.com/THCLab/keriox" }
 

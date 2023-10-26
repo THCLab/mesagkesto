@@ -33,7 +33,7 @@ impl MessageBoxListener {
                 )
                 .route(
                     "/",
-                    actix_web::web::post().to(http_handlers::validate_message),
+                    actix_web::web::post().to(http_handlers::process_message),
                 )
         })
         .bind(addr)
@@ -45,7 +45,7 @@ impl MessageBoxListener {
 mod http_handlers {
     use std::sync::Arc;
 
-    use crate::messagebox::MessageBox;
+    use crate::{messagebox::MessageBox, MessageboxError};
     use actix_web::{http::header::ContentType, web, HttpResponse};
     use keri::{
         actor::parse_reply_stream,
@@ -106,16 +106,27 @@ mod http_handlers {
             .body(String::from_utf8(oobis).unwrap()))
     }
 
-    pub async fn validate_message(
+    pub async fn process_message(
         body: String,
         data: web::Data<Arc<MessageBox>>,
     ) -> Result<HttpResponse, ApiError> {
-        Ok(match data.validator_handle.validate(body).await {
+        Ok(match data.process_message(body).await {
             Ok(Some(response)) => HttpResponse::Ok().body(response),
             Ok(None) => HttpResponse::Ok().finish(),
+            Err(MessageboxError::VerificationFailure) => HttpResponse::Unauthorized().finish(),
+            Err(MessageboxError::ResponseNotReady(said)) => {
+                let message = format!(
+                    "Missing event, need to ask later on `/messages/{}` endpoint.",
+                    said.to_string()
+                );
+                HttpResponse::Accepted().body(message)
+            }
+            Err(MessageboxError::MissingOobi) => {
+                let message = format!("Missing oobi, need to be provided to `/resolve` endpoint.");
+                HttpResponse::UnprocessableEntity().body(message)
+            }
             Err(err) => {
                 let message = format!("Message ignored due to error: {}", &err);
-                println!("{}", &message);
                 HttpResponse::BadRequest().body(message)
             }
         })

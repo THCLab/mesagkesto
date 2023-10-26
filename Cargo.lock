@@ -694,22 +694,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cesrox"
-version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85521bf1c8081199db779589496bdfe65aa09ae283a20b53df7bd78cba591282"
-dependencies = [
- "base64 0.13.1",
- "chrono",
- "nom",
- "rmp-serde 1.1.2",
- "serde",
- "serde_cbor",
- "serde_json",
- "thiserror",
-]
-
-[[package]]
 name = "cfg-if"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -837,11 +821,11 @@ version = "0.1.0"
 source = "git+https://github.com/THCLab/keriox#792aa5a6aeeadf4befbdb477dd3ddfa5e63c9914"
 dependencies = [
  "async-std",
- "cesrox 0.1.3",
+ "cesrox",
  "futures",
  "itertools",
  "keri",
- "said 0.1.0",
+ "said",
  "serde_json",
  "teliox",
  "thiserror",
@@ -1719,7 +1703,7 @@ dependencies = [
  "blake2",
  "blake3",
  "bytes",
- "cesrox 0.1.3",
+ "cesrox",
  "chrono",
  "ed25519-dalek",
  "fraction",
@@ -1729,7 +1713,7 @@ dependencies = [
  "reqwest",
  "ryu",
  "sad_macros",
- "said 0.1.0",
+ "said",
  "serde",
  "serde-hex",
  "serde_cbor",
@@ -1848,12 +1832,12 @@ version = "0.1.0"
 dependencies = [
  "actix-web",
  "anyhow",
- "cesrox 0.1.3",
+ "cesrox",
  "clap 4.4.6",
  "controller",
  "figment",
  "keri",
- "said 0.3.0",
+ "said",
  "serde",
  "serde_json",
  "tempfile",
@@ -2594,7 +2578,7 @@ dependencies = [
  "base64 0.13.1",
  "blake2",
  "blake3",
- "cesrox 0.1.3",
+ "cesrox",
  "clap 3.2.25",
  "sad_macros",
  "serde",
@@ -2602,27 +2586,6 @@ dependencies = [
  "sha3",
  "thiserror",
  "version",
-]
-
-[[package]]
-name = "said"
-version = "0.3.0"
-source = "git+https://github.com/THCLab/cesrox#9902c9fd9dd536a0451a9d1b4a1e788aae4cd5b5"
-dependencies = [
- "base64 0.13.1",
- "blake2",
- "blake3",
- "cesrox 0.1.4",
- "clap 3.2.25",
- "nom",
- "rmp-serde 0.15.5",
- "serde",
- "serde_cbor",
- "serde_derive",
- "serde_json",
- "sha2",
- "sha3",
- "thiserror",
 ]
 
 [[package]]
@@ -2982,11 +2945,11 @@ dependencies = [
  "arrayref",
  "async-trait",
  "base64 0.13.1",
- "cesrox 0.1.3",
+ "cesrox",
  "chrono",
  "keri",
  "reqwest",
- "said 0.1.0",
+ "said",
  "serde",
  "serde-hex",
  "serde_cbor",

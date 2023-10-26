@@ -1,27 +1,27 @@
 use std::collections::HashMap;
 
 use controller::IdentifierPrefix;
-use keri::actor::prelude::SelfAddressingIdentifier;
+use keri::event_message::signature::Signature;
 use tokio::sync::{mpsc, oneshot};
 
-use crate::{validate::ValidateHandle, MessageboxError};
-
-use super::{signer::SignerHandle, VerifyHandle};
+use crate::MessageboxError;
 
 #[derive(Debug)]
 pub enum ReverifyMessage {
     Save {
         id: IdentifierPrefix,
+        // digest: SelfAddressingIdentifier,
         message: String,
+        signatures: Vec<Signature>,
     },
     Get {
         id: IdentifierPrefix,
-        sender: oneshot::Sender<String>,
+        sender: oneshot::Sender<(Vec<u8>, Vec<Signature>)>,
     },
 }
 
 pub struct ReverifyActor {
-    reverify_dict: HashMap<IdentifierPrefix, String>,
+    reverify_dict: HashMap<IdentifierPrefix, (Vec<u8>, Vec<Signature>)>,
     // From where get messages
     receiver: mpsc::Receiver<ReverifyMessage>,
 }
@@ -36,9 +36,14 @@ impl ReverifyActor {
     async fn handle_message(&mut self, msg: ReverifyMessage) {
         match msg {
             // ReverifyMessage::Save { digest, message } => {
-            ReverifyMessage::Save { id, message } => {
+            ReverifyMessage::Save {
+                id,
+                message,
+                signatures,
+            } => {
                 println!("\nSaving to verify later: {}", &message);
-                self.reverify_dict.insert(id, message);
+                self.reverify_dict
+                    .insert(id, (message.as_bytes().to_vec(), signatures));
             }
             ReverifyMessage::Get { id, sender } => {
                 let message = self.reverify_dict.get(&id);
@@ -70,8 +75,17 @@ impl ReverifyHandle {
         }
     }
 
-    pub async fn save(&self, id: IdentifierPrefix, message: String) -> Result<(), MessageboxError> {
-        let msg = ReverifyMessage::Save { id, message };
+    pub async fn save(
+        &self,
+        id: IdentifierPrefix,
+        message: String,
+        signatures: Vec<Signature>,
+    ) -> Result<(), MessageboxError> {
+        let msg = ReverifyMessage::Save {
+            id,
+            message,
+            signatures,
+        };
 
         // Ignore send errors. If this send fails, so does the
         // recv.await below. There's no reason to check for the
@@ -80,7 +94,10 @@ impl ReverifyHandle {
         Ok(())
     }
 
-    pub async fn get(&self, identifier: IdentifierPrefix) -> Result<String, MessageboxError> {
+    pub async fn get(
+        &self,
+        identifier: IdentifierPrefix,
+    ) -> Result<(Vec<u8>, Vec<Signature>), MessageboxError> {
         let (send, recv) = oneshot::channel();
         let msg = ReverifyMessage::Get {
             id: identifier,

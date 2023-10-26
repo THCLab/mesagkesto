@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, VecDeque},
+    path::Path,
     sync::Arc,
     time::Duration,
 };
@@ -9,15 +10,16 @@ use controller::{
     BasicPrefix, Controller, EndRole, IdentifierPrefix, LocationScheme, Oobi,
 };
 use keri::{
-    event_message::signature::{get_signatures, Nontransferable, Signature},
+    event_message::signature::{Nontransferable, Signature},
     oobi::Role,
     processor::event_storage::EventStorage,
     signer::Signer,
     transport::TransportError,
 };
+use said::derivation::{HashFunction, HashFunctionCode};
 use tokio::{sync::Mutex, time::sleep};
 
-use crate::MessageboxError;
+use crate::{validate::ValidateHandle, MessageboxError};
 
 use super::{
     reverify::ReverifyHandle, signer::SignerHandle, task::VerificationTask, VerifyMessage,
@@ -30,13 +32,15 @@ pub(crate) struct VerifyData {
     witnesses: Arc<Mutex<HashMap<IdentifierPrefix, Vec<BasicPrefix>>>>,
     reverify: ReverifyHandle,
     task_queue: Arc<Mutex<VecDeque<VerificationTask>>>,
+    validate_handle: ValidateHandle,
 }
 
 impl VerifyData {
     pub async fn setup(
-        db_path: &str,
+        db_path: &Path,
         watcher_oobi: LocationScheme,
         seed: Option<String>,
+        validate_handle: ValidateHandle,
     ) -> Result<Self, MessageboxError> {
         let signer = Arc::new(
             seed.map(|key| Signer::new_with_seed(&key.parse()?))
@@ -79,11 +83,12 @@ impl VerifyData {
             witnesses: Arc::new(Mutex::new(HashMap::new())),
             reverify: ReverifyHandle::new(),
             task_queue: Arc::new(Mutex::new(VecDeque::new())),
+            validate_handle,
         })
     }
 
     fn verify(
-        s: Signature,
+        s: &Signature,
         data: &[u8],
         storage: Arc<EventStorage>,
     ) -> Result<bool, MessageboxError> {
@@ -94,14 +99,20 @@ impl VerifyData {
                         if let Ok(r) =
                             storage.get_keys_at_event(&es.prefix, es.sn, &es.event_digest)
                         {
-                            (r.map(|r| r), es.prefix, Some(es.event_digest))
+                            (
+                                r.map(|r| r),
+                                es.prefix.clone(),
+                                Some(es.event_digest.clone()),
+                            )
                         } else {
-                            (None, es.prefix, Some(es.event_digest))
+                            (None, es.prefix.clone(), Some(es.event_digest.clone()))
                         }
                     }
-                    keri::event_message::signature::SignerData::LastEstablishment(id) => {
-                        (storage.get_state(&id).unwrap().map(|e| e.current), id, None)
-                    }
+                    keri::event_message::signature::SignerData::LastEstablishment(id) => (
+                        storage.get_state(&id).unwrap().map(|e| e.current),
+                        id.clone(),
+                        None,
+                    ),
                     keri::event_message::signature::SignerData::JustSignatures => todo!(),
                 };
                 if let Some(k) = kc {
@@ -117,21 +128,6 @@ impl VerifyData {
                 Err(MessageboxError::Keri)
             }
         }
-    }
-
-    fn split_cesr_stream(input: &[u8]) -> (Vec<u8>, impl Iterator<Item = Signature>) {
-        let (_rest, parsed_data) = cesrox::parse(input).unwrap();
-        let data = match parsed_data.payload {
-            cesrox::payload::Payload::JSON(json) => json,
-            cesrox::payload::Payload::CBOR(_) => todo!(),
-            cesrox::payload::Payload::MGPK(_) => todo!(),
-        };
-        let signatures = parsed_data
-            .attachments
-            .into_iter()
-            .map(|g| get_signatures(g).unwrap())
-            .flatten();
-        (data, signatures)
     }
 
     async fn has_oobi(&self, id: &IdentifierPrefix) -> bool {
@@ -193,19 +189,35 @@ impl VerifyData {
         }
     }
 
-    async fn verify_message(&self, message: String) -> Result<bool, MessageboxError> {
-        let (data, signatures) = Self::split_cesr_stream(message.as_bytes());
-
+    async fn verify_message(
+        &self,
+        message: &str,
+        signatures: Vec<Signature>,
+    ) -> Result<(), MessageboxError> {
         let ver_res = signatures
-            .map(|sig| Self::verify(sig, &data, self.controller.source.storage.clone()))
+            .iter()
+            .map(|sig| {
+                Self::verify(
+                    sig,
+                    message.as_bytes(),
+                    self.controller.source.storage.clone(),
+                )
+            })
             .collect::<Result<Vec<bool>, _>>();
+        println!("ver result: {:?}", ver_res);
         match ver_res {
-            Ok(res) => Ok(res.into_iter().all(|a| a)),
+            Ok(res) => {
+                if res.into_iter().all(|a| a) {
+                    Ok(())
+                } else {
+                    Err(MessageboxError::VerificationFailure)
+                }
+            }
             Err(MessageboxError::MissingEvent(id, said)) => {
                 if self.has_oobi(&id).await {
                     // self.reverify.save(said.clone(), message.clone()).await.unwrap();
                     self.reverify
-                        .save(id.clone(), message.clone())
+                        .save(id.clone(), message.to_string(), signatures)
                         .await
                         .unwrap();
                     // Ask watcher
@@ -215,24 +227,30 @@ impl VerifyData {
                             .await
                             .push_back(VerificationTask::Find(id.clone()));
                     }
-                    Err(MessageboxError::MissingEvent(id, said))
+
+                    let digest: said::SelfAddressingIdentifier =
+                        HashFunction::from(HashFunctionCode::Blake3_256)
+                            .derive(&message.as_bytes());
+                    Err(MessageboxError::ResponseNotReady(digest))
                 } else {
                     Err(MessageboxError::MissingOobi)
                 }
             }
-            Err(MessageboxError::VerificationFailure) => Ok(false),
             Err(e) => Err(e),
         }
     }
 
     pub async fn handle_message(&self, msg: VerifyMessage) {
         match msg {
-            VerifyMessage::Verify { message, sender } => {
-                self.task_queue
-                    .lock()
-                    .await
-                    .push_back(VerificationTask::Verify(message, sender))
-            }
+            VerifyMessage::Verify {
+                message,
+                signatures,
+                sender,
+            } => self
+                .task_queue
+                .lock()
+                .await
+                .push_back(VerificationTask::Verify(message, signatures, sender)),
             VerifyMessage::Oobi { message, sender } => {
                 let oobi: Oobi = serde_json::from_str(&message).unwrap();
                 // Save witness oobi to be able to check, if we know it already!!!!
@@ -276,18 +294,23 @@ impl VerifyData {
             let task = { self.task_queue.lock().await.pop_front() };
             if let Some(task) = task {
                 match task {
-                    VerificationTask::Verify(message, sender) => {
+                    VerificationTask::Verify(message, signature, sender) => {
                         println!("\nHandle verify task");
-                        let _ = sender.send(self.verify_message(message).await);
+                        let _ = sender.send(self.verify_message(&message, signature).await);
                     }
                     VerificationTask::Find(id) => {
                         println!("\nHandle  find task");
                         self.ask_watcher(&id).await
                     }
                     VerificationTask::Reverify(id) => {
-                        let to_reverify = self.reverify.get(id.clone()).await.unwrap();
-                        let res = self.verify_message(to_reverify).await.unwrap();
                         println!("\nHandle reverify task");
+                        let (data, signatures) = self.reverify.get(id.clone()).await.unwrap();
+                        let message = String::from_utf8(data).unwrap();
+                        self.verify_message(&message, signatures).await.unwrap();
+                        self.validate_handle
+                            .process_and_save(message)
+                            .await
+                            .unwrap();
                     }
                 };
             }

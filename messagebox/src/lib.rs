@@ -8,9 +8,14 @@ pub mod messagebox;
 pub mod messagebox_listener;
 pub mod notifier;
 pub mod oobis;
+mod responses_store;
 pub mod storage;
 pub mod validate;
 pub mod verify;
+
+#[cfg(test)]
+pub mod test;
+
 use crate::validate::MessageType;
 
 #[derive(Error, Debug)]
@@ -29,6 +34,8 @@ pub enum MessageboxError {
     MissingEvent(IdentifierPrefix, SelfAddressingIdentifier),
     #[error("Missing oobi")]
     MissingOobi,
+    #[error("Response not ready")]
+    ResponseNotReady(SelfAddressingIdentifier),
 }
 
 pub fn register_token(id: String, token: String) -> MessageType {

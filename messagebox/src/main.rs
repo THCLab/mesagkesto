@@ -14,6 +14,8 @@ use url::Url;
 pub struct Config {
     oobi_path: PathBuf,
 
+    db_path: PathBuf,
+
     /// Public URL used to advertise itself to other actors using OOBI.
     public_url: Url,
 
@@ -66,7 +68,14 @@ async fn main() -> Result<()> {
         .extract::<Config>()
         .context("Failed to load config")?;
 
-    let data = MessageBox::setup(&cfg.oobi_path, cfg.public_url, cfg.seed, cfg.server_key).await?;
+    let data = MessageBox::setup(
+        &cfg.db_path,
+        &cfg.oobi_path,
+        cfg.public_url,
+        cfg.seed,
+        cfg.server_key,
+    )
+    .await?;
     let messagebox_oobi = data.oobi();
 
     let listener = MessageBoxListener { messagebox: data };
