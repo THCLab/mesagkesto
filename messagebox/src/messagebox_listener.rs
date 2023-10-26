@@ -39,6 +39,10 @@ impl MessageBoxListener {
                     "/resolve",
                     actix_web::web::post().to(http_handlers::resolve_oobi),
                 )
+                .route(
+                    "/messages/{said}",
+                    actix_web::web::get().to(http_handlers::get_response),
+                )
         })
         .bind(addr)
         .unwrap()
@@ -58,6 +62,7 @@ mod http_handlers {
         prefix::IdentifierPrefix,
         query::reply_event::SignedReply,
     };
+    use said::SelfAddressingIdentifier;
 
     use super::ApiError;
 
@@ -162,6 +167,20 @@ mod http_handlers {
         );
 
         data.resolve_oobi(String::from_utf8(body.to_vec()).unwrap())
+            .await
+            .unwrap();
+
+        Ok(HttpResponse::Ok().finish())
+    }
+
+    pub async fn get_response(
+        said: web::Path<SelfAddressingIdentifier>,
+        data: web::Data<Arc<MessageBox>>,
+    ) -> Result<HttpResponse, ApiError> {
+        println!("\nRequest responses for: \n{}", &said.to_string());
+
+        data.response_handle
+            .get_by_digest(said.into_inner())
             .await
             .unwrap();
 

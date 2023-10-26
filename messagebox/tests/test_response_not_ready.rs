@@ -6,11 +6,10 @@ pub mod test {
         config::ControllerConfig, identifier_controller::IdentifierController, BasicPrefix,
         Controller, CryptoBox, KeyManager, LocationScheme, SelfSigningPrefix,
     };
+    use messagebox::{forward_message, messagebox::MessageBox, query_by_sn, MessageboxError};
     use serde_json::json;
     use tempfile::Builder;
     use tokio::time::sleep;
-
-    use crate::{forward_message, messagebox::MessageBox, query_by_sn, MessageboxError};
 
     async fn setup_identifier(km: &CryptoBox, db_path: &Path) -> IdentifierController {
         // Setup signer
@@ -78,7 +77,6 @@ pub mod test {
             .unwrap();
         id.notify_witnesses().await.unwrap();
 
-        // ===============================
         // Publishing rotation after messagebox resolve oobi, to let him retrieve it from watcher.
         // Quering mailbox to get receipts
         let query = id.query_mailbox(&id.id, &[witness_id.clone()]).unwrap();
@@ -103,17 +101,16 @@ pub mod test {
 
         // Setup signer
         let mut km1 = CryptoBox::new().unwrap();
-        let mut km2 = CryptoBox::new().unwrap();
+        let km2 = CryptoBox::new().unwrap();
         let witness_oobi_st = r#"{"eid":"BJq7UABlttINuWJh1Xl2lkqZG4NTdUdqnbFJDa6ZyxCC","scheme":"http","url":"http://witness1.sandbox.argo.colossi.network/"}"#;
         // let witness_oobi_st = r#"{"eid":"BJq7UABlttINuWJh1Xl2lkqZG4NTdUdqnbFJDa6ZyxCC","scheme":"http","url":"http://localhost:3232/"}"#;
-        let witness_oobi: LocationScheme = serde_json::from_str(witness_oobi_st).unwrap();
         let witness_id: BasicPrefix = "BJq7UABlttINuWJh1Xl2lkqZG4NTdUdqnbFJDa6ZyxCC"
             .parse()
             .unwrap();
-        let quering_identifier = setup_identifier(&km1, quering_id_db.path()).await;
+        let querying_identifier = setup_identifier(&km1, quering_id_db.path()).await;
         let inserting_identifier = setup_identifier(&km2, inserting_id_db.path()).await;
 
-        let oobi_str = json!({"cid": &quering_identifier.id ,"role":"witness","eid":"BJq7UABlttINuWJh1Xl2lkqZG4NTdUdqnbFJDa6ZyxCC"}).to_string();
+        let querying_oobi_str = json!({"cid": &querying_identifier.id ,"role":"witness","eid":"BJq7UABlttINuWJh1Xl2lkqZG4NTdUdqnbFJDa6ZyxCC"}).to_string();
         let inserting_oobi_str = json!({"cid": &inserting_identifier.id ,"role":"witness","eid":"BJq7UABlttINuWJh1Xl2lkqZG4NTdUdqnbFJDa6ZyxCC"}).to_string();
 
         // Setup messagebox
@@ -128,34 +125,32 @@ pub mod test {
             .await
             .unwrap();
 
-        msg_box.resolve_oobi(oobi_str.clone()).await.unwrap();
-
-        // Rotate identifier
-        km1.rotate().unwrap();
-        update_identifier(&quering_identifier, &km1, witness_id).await;
-
-        // Process exn from inserting identifier.
-        let msg = forward_message("Identifier".to_string(), "saved0".to_string());
-        let signature =
-            SelfSigningPrefix::Ed25519Sha512(km2.sign(msg.to_string().as_bytes()).unwrap());
-        let s = inserting_identifier
-            .sign_to_cesr(&msg.to_string(), signature, 0)
+        msg_box
+            .resolve_oobi(querying_oobi_str.clone())
+            .await
             .unwrap();
 
-        let r = msg_box.process_message(s).await;
+        // Rotate querying identifier
+        km1.rotate().unwrap();
+        update_identifier(&querying_identifier, &km1, witness_id).await;
+
+        // Save message from inserting identifier.
+        let exn_msg = forward_message("Identifier".to_string(), "saved0".to_string());
+        let signature =
+            SelfSigningPrefix::Ed25519Sha512(km2.sign(exn_msg.to_string().as_bytes()).unwrap());
+        let signed_exn = inserting_identifier
+            .sign_to_cesr(&exn_msg.to_string(), signature, 0)
+            .unwrap();
+
+        let r = msg_box.process_message(signed_exn).await;
         assert!(r.is_ok());
 
-        dbg!(&r);
-        // assert!(matches!(r, Err(MessageboxError::MissingEvent(_, _))));
-
-        let msg = query_by_sn("Identifier".to_string(), 0);
-        // let msg = r#"{"m":"hi there2"}"#;
+        let qry_msg = query_by_sn("Identifier".to_string(), 0);
         let signature =
-            SelfSigningPrefix::Ed25519Sha512(km1.sign(msg.to_string().as_bytes()).unwrap());
-        let signed_query = quering_identifier
-            .sign_to_cesr(&msg.to_string(), signature, 0)
+            SelfSigningPrefix::Ed25519Sha512(km1.sign(qry_msg.to_string().as_bytes()).unwrap());
+        let signed_query = querying_identifier
+            .sign_to_cesr(&qry_msg.to_string(), signature, 0)
             .unwrap();
-        println!("\ns: {}", signed_query);
 
         let r = msg_box.process_message(signed_query).await;
         dbg!(&r);
@@ -163,7 +158,8 @@ pub mod test {
             sleep(Duration::from_secs(5)).await;
             let response = msg_box.get_responses(sai).await;
             assert!(response.is_some());
-            println!("\nresponses: {:?}", response);
+        } else {
+            unreachable!()
         };
     }
 }

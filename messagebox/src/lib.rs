@@ -13,9 +13,6 @@ pub mod storage;
 pub mod validate;
 pub mod verify;
 
-#[cfg(test)]
-pub mod test;
-
 use crate::validate::MessageType;
 
 #[derive(Error, Debug)]

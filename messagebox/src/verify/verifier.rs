@@ -121,9 +121,9 @@ impl VerifyData {
                     Err(MessageboxError::MissingEvent(id, event_sai.unwrap()))
                 }
             }
-            Signature::NonTransferable(Nontransferable::Couplet(couplets)) => Ok((couplets
+            Signature::NonTransferable(Nontransferable::Couplet(couplets)) => Ok(couplets
                 .iter()
-                .all(|(id, sig)| id.verify(data, &sig).unwrap()))),
+                .all(|(id, sig)| id.verify(data, &sig).unwrap())),
             Signature::NonTransferable(Nontransferable::Indexed(_sigs)) => {
                 Err(MessageboxError::Keri)
             }
@@ -215,7 +215,6 @@ impl VerifyData {
             }
             Err(MessageboxError::MissingEvent(id, said)) => {
                 if self.has_oobi(&id).await {
-                    // self.reverify.save(said.clone(), message.clone()).await.unwrap();
                     self.reverify
                         .save(id.clone(), message.to_string(), signatures)
                         .await
