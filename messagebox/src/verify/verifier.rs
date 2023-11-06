@@ -87,7 +87,7 @@ impl VerifyData {
                             storage.get_keys_at_event(&es.prefix, es.sn, &es.event_digest)
                         {
                             (
-                                r.map(|r| r),
+                                r,
                                 es.prefix.clone(),
                                 Some(es.event_digest.clone()),
                             )
@@ -96,21 +96,21 @@ impl VerifyData {
                         }
                     }
                     keri::event_message::signature::SignerData::LastEstablishment(id) => (
-                        storage.get_state(&id).unwrap().map(|e| e.current),
+                        storage.get_state(id).unwrap().map(|e| e.current),
                         id.clone(),
                         None,
                     ),
                     keri::event_message::signature::SignerData::JustSignatures => todo!(),
                 };
                 if let Some(k) = kc {
-                    Ok(k.verify(data, &sigs).unwrap())
+                    Ok(k.verify(data, sigs).unwrap())
                 } else {
                     Err(MessageboxError::MissingEvent(id, event_sai.unwrap()))
                 }
             }
             Signature::NonTransferable(Nontransferable::Couplet(couplets)) => Ok(couplets
                 .iter()
-                .all(|(id, sig)| id.verify(data, &sig).unwrap())),
+                .all(|(id, sig)| id.verify(data, sig).unwrap())),
             Signature::NonTransferable(Nontransferable::Indexed(_sigs)) => {
                 todo!()
             }
@@ -121,9 +121,9 @@ impl VerifyData {
         self.witnesses
             .lock()
             .await
-            .get(&id)
+            .get(id)
             .map(|witnesses| {
-                witnesses.into_iter().any(|eid| {
+                witnesses.iter().any(|eid| {
                     self.controller
                         .source
                         .get_loc_schemas(&IdentifierPrefix::Basic(eid.clone().clone()))
@@ -138,7 +138,7 @@ impl VerifyData {
         // Ask watcher
         let mut query = vec![];
 
-        for qry in self.controller.query_own_watchers(&id).unwrap() {
+        for qry in self.controller.query_own_watchers(id).unwrap() {
             let ssp = self
                 .signer
                 .sign(String::from_utf8(qry.encode().unwrap()).unwrap())
@@ -157,7 +157,7 @@ impl VerifyData {
         ) {
             sleep(Duration::from_secs(3)).await;
             let mut query = vec![];
-            for qry in self.controller.query_own_watchers(&id).unwrap() {
+            for qry in self.controller.query_own_watchers(id).unwrap() {
                 let ssp = self
                     .signer
                     .sign(String::from_utf8(qry.encode().unwrap()).unwrap())
@@ -216,7 +216,7 @@ impl VerifyData {
 
                     let digest: said::SelfAddressingIdentifier =
                         HashFunction::from(HashFunctionCode::Blake3_256)
-                            .derive(&message.as_bytes());
+                            .derive(message.as_bytes());
                     Err(MessageboxError::ResponseNotReady(digest))
                 } else {
                     Err(MessageboxError::MissingOobi)
@@ -228,7 +228,7 @@ impl VerifyData {
 
     async fn handle_oobi(&self, oobi_str: &str) -> Result<(), MessageboxError> {
         let oobi: Oobi =
-            serde_json::from_str(&oobi_str).map_err(|_| MessageboxError::OobiParsingError)?;
+            serde_json::from_str(oobi_str).map_err(|_| MessageboxError::OobiParsingError)?;
         // Save witness oobi to be able to check, if we know it already!!!!
         match &oobi {
             Oobi::EndRole(EndRole {
@@ -254,12 +254,12 @@ impl VerifyData {
             .source
             .resolve_oobi(oobi.clone())
             .await
-            .map_err(|e| MessageboxError::OobiError(e))?;
+            .map_err(MessageboxError::OobiError)?;
         self.controller
             .source
             .send_oobi_to_watcher(&self.controller.id, &oobi)
             .await
-            .map_err(|e| MessageboxError::OobiError(e))?;
+            .map_err(MessageboxError::OobiError)?;
         Ok(())
     }
 

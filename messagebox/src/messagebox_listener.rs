@@ -126,12 +126,12 @@ mod http_handlers {
             Err(MessageboxError::ResponseNotReady(said)) => {
                 let message = format!(
                     "Missing event, need to ask later on `/messages/{}` endpoint.",
-                    said.to_string()
+                    said
                 );
                 HttpResponse::Accepted().body(message)
             }
             Err(MessageboxError::MissingOobi) => {
-                let message = format!("Missing oobi, need to be provided to `/resolve` endpoint.");
+                let message = "Missing oobi, need to be provided to `/resolve` endpoint.".to_string();
                 HttpResponse::UnprocessableEntity().body(message)
             }
             Err(err) => {

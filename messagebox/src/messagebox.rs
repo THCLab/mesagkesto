@@ -98,7 +98,6 @@ impl MessageBox {
                     .await
             }
             // Err(MessageboxError::MissingEvent(id, dig )) => {
-
             // },
             Err(e) => Err(e),
         }
@@ -151,8 +150,7 @@ impl MessageBox {
         let signatures = parsed_data
             .attachments
             .into_iter()
-            .map(|g| get_signatures(g).unwrap())
-            .flatten();
+            .flat_map(|g| get_signatures(g).unwrap());
         (data, signatures)
     }
 }

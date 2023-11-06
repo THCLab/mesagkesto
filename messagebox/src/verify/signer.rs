@@ -48,7 +48,7 @@ impl SignerActor {
                 let signature = self
                     .signer
                     .sign(data.as_bytes())
-                    .map(|signature| SelfSigningPrefix::Ed25519Sha512(signature));
+                    .map(SelfSigningPrefix::Ed25519Sha512);
                 let _ = sender.send(signature);
             }
             SignerMessage::PublicKey { sender } => {

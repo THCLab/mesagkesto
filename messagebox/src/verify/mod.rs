@@ -133,140 +133,160 @@ impl VerifyHandle {
     }
 }
 
-// #[cfg(test)]
-// pub mod test {
-//     use std::{sync::Arc, time::Duration};
+#[cfg(test)]
+pub mod test {
+    use std::{sync::Arc, time::Duration};
 
-//     use controller::{
-//         config::ControllerConfig, identifier_controller::IdentifierController, BasicPrefix,
-//         Controller, KeyManager, LocationScheme, SelfSigningPrefix,
-//     };
-//     use serde_json::json;
-//     use tokio::time::sleep;
+    use controller::{
+        config::ControllerConfig, identifier_controller::IdentifierController, BasicPrefix,
+        Controller, KeyManager, LocationScheme, SelfSigningPrefix,
+    };
+    use serde_json::json;
+    use tempfile::Builder;
+    use tokio::time::sleep;
 
-//     use crate::{verify::VerifyHandle, responses_store::ResponsesHandle, validate::ValidateHandle};
+    use crate::{
+        forward_message, notifier::NotifyHandle, responses_store::ResponsesHandle,
+        storage::StorageHandle, validate::ValidateHandle, verify::VerifyHandle, MessageboxError,
+    };
 
-//     #[actix_web::test]
-//     async fn test_verify_handle() {
-//         use keri::signer::CryptoBox;
+    #[actix_web::test]
+    async fn test_verify_handle() {
+        use keri::signer::CryptoBox;
+        let root = Builder::new().prefix("test-db").tempdir().unwrap();
+        let cont = Arc::new(
+            Controller::new(ControllerConfig {
+                db_path: root.path().into(),
+                ..ControllerConfig::default()
+            })
+            .unwrap(),
+        );
+        let mut km1 = CryptoBox::new().unwrap();
+        let witness_oobi_st = r#"{"eid":"BJq7UABlttINuWJh1Xl2lkqZG4NTdUdqnbFJDa6ZyxCC","scheme":"http","url":"http://witness1.sandbox.argo.colossi.network/"}"#;
+        // let witness_oobi_st = r#"{"eid":"BJq7UABlttINuWJh1Xl2lkqZG4NTdUdqnbFJDa6ZyxCC","scheme":"http","url":"http://localhost:3232/"}"#;
+        let witness_oobi: LocationScheme = serde_json::from_str(witness_oobi_st).unwrap();
+        let witness_id: BasicPrefix = "BJq7UABlttINuWJh1Xl2lkqZG4NTdUdqnbFJDa6ZyxCC"
+            .parse()
+            .unwrap();
 
-//         let cont = Arc::new(Controller::new(ControllerConfig::default()).unwrap());
-//         let mut km1 = CryptoBox::new().unwrap();
-//         let witness_oobi_st = r#"{"eid":"BJq7UABlttINuWJh1Xl2lkqZG4NTdUdqnbFJDa6ZyxCC","scheme":"http","url":"http://witness1.sandbox.argo.colossi.network/"}"#;
-//         // let witness_oobi_st = r#"{"eid":"BJq7UABlttINuWJh1Xl2lkqZG4NTdUdqnbFJDa6ZyxCC","scheme":"http","url":"http://localhost:3232/"}"#;
-//         let witness_oobi: LocationScheme = serde_json::from_str(witness_oobi_st).unwrap();
-//         let witness_id: BasicPrefix = "BJq7UABlttINuWJh1Xl2lkqZG4NTdUdqnbFJDa6ZyxCC"
-//             .parse()
-//             .unwrap();
+        // Incept signer identifier and publish kel to witness.
+        let signing_identifier = {
+            let pk = BasicPrefix::Ed25519(km1.public_key());
+            let npk = BasicPrefix::Ed25519(km1.next_public_key());
 
-//         // Incept signer identifier and publish kel to witness.
-//         let mut signing_identifier = {
-//             let pk = BasicPrefix::Ed25519(km1.public_key());
-//             let npk = BasicPrefix::Ed25519(km1.next_public_key());
+            let icp_event = cont
+                .incept(vec![pk], vec![npk], vec![witness_oobi], 1)
+                .await
+                .unwrap();
+            let signature =
+                SelfSigningPrefix::Ed25519Sha512(km1.sign(icp_event.as_bytes()).unwrap());
 
-//             let icp_event = cont
-//                 .incept(vec![pk], vec![npk], vec![witness_oobi], 1)
-//                 .await
-//                 .unwrap();
-//             let signature =
-//                 SelfSigningPrefix::Ed25519Sha512(km1.sign(icp_event.as_bytes()).unwrap());
+            let incepted_identifier = cont
+                .finalize_inception(icp_event.as_bytes(), &signature)
+                .await
+                .unwrap();
+            IdentifierController::new(incepted_identifier, cont.clone(), None)
+        };
 
-//             let incepted_identifier = cont
-//                 .finalize_inception(icp_event.as_bytes(), &signature)
-//                 .await
-//                 .unwrap();
-//             IdentifierController::new(incepted_identifier, cont.clone(), None)
-//         };
+        signing_identifier.notify_witnesses().await.unwrap();
 
-//         signing_identifier.notify_witnesses().await.unwrap();
+        // Quering mailbox to get receipts
+        let query = signing_identifier
+            .query_mailbox(&signing_identifier.id, &[witness_id.clone()])
+            .unwrap();
 
-//         // Quering mailbox to get receipts
-//         let query = signing_identifier
-//             .query_mailbox(&signing_identifier.id, &[witness_id.clone()])
-//             .unwrap();
+        // Query with wrong signature
+        {
+            let qry = query[0].clone();
+            let sig = SelfSigningPrefix::Ed25519Sha512(km1.sign(&qry.encode().unwrap()).unwrap());
+            signing_identifier
+                .finalize_query(vec![(qry, sig)])
+                .await
+                .unwrap();
+        }
 
-//         // Query with wrong signature
-//         {
-//             let qry = query[0].clone();
-//             let sig = SelfSigningPrefix::Ed25519Sha512(km1.sign(&qry.encode().unwrap()).unwrap());
-//             signing_identifier
-//                 .finalize_query(vec![(qry, sig)])
-//                 .await
-//                 .unwrap();
-//         }
+        let rrr = signing_identifier.source.get_state(&signing_identifier.id);
+        assert!(rrr.is_ok());
 
-//         let rrr = signing_identifier.source.get_state(&signing_identifier.id);
-//         assert!(rrr.is_ok());
+        let oobi_str = json!({"cid": &signing_identifier.id ,"role":"witness","eid":"BJq7UABlttINuWJh1Xl2lkqZG4NTdUdqnbFJDa6ZyxCC"}).to_string();
 
-//         let oobi_str = json!({"cid": &signing_identifier.id ,"role":"witness","eid":"BJq7UABlttINuWJh1Xl2lkqZG4NTdUdqnbFJDa6ZyxCC"}).to_string();
+        let msg = r#"{"m":"hi there"}"#;
+        let signature = SelfSigningPrefix::Ed25519Sha512(km1.sign(msg.as_bytes()).unwrap());
+        let signature = signing_identifier.sign(signature, 0).unwrap();
 
-//         // let msg = r#"{"m":"hi there"}"#;
-//         // let signature = SelfSigningPrefix::Ed25519Sha512(km1.sign(msg.as_bytes()).unwrap());
-//         // let s = signing_identifier.sign_to_cesr(&msg, signature, 0).unwrap();
-//         // println!("\ns: {}", s);
-//         let rh = ResponsesHandle::new();
-//         let vh = VerifyHandle::new(rh).await;
+        let notify_handle =
+            NotifyHandle::new("AAAAky1v068:APA91bHHpGtP6M5h3ICFc9AzY35MrkTmjwblkLlEJ1C0yvkrUu7KDkmkXMzPq2q-0o1l49fKxOeDQaKIkZTTEAIX3Jd45j6KNtSempYqop4Psitvz2Ng7iBz-IeS1SGEs1GpnWseJlpP".to_string());
+        let storage_handle = StorageHandle::new(notify_handle.clone());
+        let response_handle = ResponsesHandle::new();
+        let validator_handle = ValidateHandle::new(
+            storage_handle.clone(),
+            notify_handle,
+            response_handle.clone(),
+        );
+        let root = Builder::new().prefix("test-db2").tempdir().unwrap();
+        let vh = VerifyHandle::new(root.path(), validator_handle).await;
 
-//         // assert!(matches!(
-//         //     vh.verify(&s).await,
-//         //     Err(MessageboxError::MissingOobi)
-//         // ));
-//         vh.resolve_oobi(witness_oobi_st.to_string()).await.unwrap();
+        assert!(matches!(
+            vh.verify(&msg, vec![signature.clone()]).await,
+            Err(MessageboxError::MissingOobi)
+        ));
+        vh.resolve_oobi(witness_oobi_st.to_string()).await.unwrap();
 
-//         // assert!(matches!(
-//         //     vh.verify(&s).await,
-//         //     Err(MessageboxError::MissingOobi)
-//         // ));
-//         vh.resolve_oobi(oobi_str.clone()).await.unwrap();
+        assert!(matches!(
+            vh.verify(&msg, vec![signature.clone()]).await,
+            Err(MessageboxError::MissingOobi)
+        ));
+        vh.resolve_oobi(oobi_str.clone()).await.unwrap();
 
-//         // let r = vh.verify(&s).await.unwrap();
-//         // assert!(r);
+        let r = vh.verify(&msg, vec![signature]).await;
+        assert!(r.is_ok());
 
-//         // Rotate identifier and try to verify again
-//         km1.rotate().unwrap();
-//         let pk = BasicPrefix::Ed25519(km1.public_key());
-//         let npk = BasicPrefix::Ed25519(km1.next_public_key());
+        // Rotate identifier and try to verify again
+        km1.rotate().unwrap();
+        let pk = BasicPrefix::Ed25519(km1.public_key());
+        let npk = BasicPrefix::Ed25519(km1.next_public_key());
 
-//         let rot_event = signing_identifier
-//             .rotate(vec![pk], vec![npk], vec![], vec![], 1)
-//             .await
-//             .unwrap();
-//         let signature = SelfSigningPrefix::Ed25519Sha512(km1.sign(rot_event.as_bytes()).unwrap());
-//         signing_identifier
-//             .finalize_event(rot_event.as_bytes(), signature)
-//             .await
-//             .unwrap();
+        let rot_event = signing_identifier
+            .rotate(vec![pk], vec![npk], vec![], vec![], 1)
+            .await
+            .unwrap();
+        let signature = SelfSigningPrefix::Ed25519Sha512(km1.sign(rot_event.as_bytes()).unwrap());
+        signing_identifier
+            .finalize_event(rot_event.as_bytes(), signature)
+            .await
+            .unwrap();
 
-//         signing_identifier.notify_witnesses().await.unwrap();
+        signing_identifier.notify_witnesses().await.unwrap();
 
-//         // Quering mailbox to get receipts
-//         let query = signing_identifier
-//             .query_mailbox(&signing_identifier.id, &[witness_id.clone()])
-//             .unwrap();
+        // Querying mailbox to get receipts
+        let query = signing_identifier
+            .query_mailbox(&signing_identifier.id, &[witness_id.clone()])
+            .unwrap();
 
-//         // Query with wrong signature
-//         {
-//             let qry = query[0].clone();
-//             let sig = SelfSigningPrefix::Ed25519Sha512(km1.sign(&qry.encode().unwrap()).unwrap());
-//             signing_identifier
-//                 .finalize_query(vec![(qry, sig)])
-//                 .await
-//                 .unwrap();
-//         }
+        // Query with wrong signature
+        {
+            let qry = query[0].clone();
+            let sig = SelfSigningPrefix::Ed25519Sha512(km1.sign(&qry.encode().unwrap()).unwrap());
+            signing_identifier
+                .finalize_query(vec![(qry, sig)])
+                .await
+                .unwrap();
+        }
 
-//         // let oobi_str = json!({"cid": &signing_identifier.id ,"role":"witness","eid":"BJq7UABlttINuWJh1Xl2lkqZG4NTdUdqnbFJDa6ZyxCC"}).to_string();
+        // let oobi_str = json!({"cid": &signing_identifier.id ,"role":"witness","eid":"BJq7UABlttINuWJh1Xl2lkqZG4NTdUdqnbFJDa6ZyxCC"}).to_string();
 
-//         let msg = r#"{"m":"hi there2"}"#;
-//         let signature = SelfSigningPrefix::Ed25519Sha512(km1.sign(msg.as_bytes()).unwrap());
-//         let s = signing_identifier.sign_to_cesr(&msg, signature, 0).unwrap();
-//         println!("\ns: {}", s);
-//         // vh.resolve_oobi(oobi_str).await.unwrap();
-//         let r = vh.verify(&s).await;
-//         dbg!(&r);
-//         // assert!(matches!(r, Err(MessageboxError::MissingEvent(_, _))));
-//         sleep(Duration::from_secs(5)).await;
+        let msg = r#"{"m":"hi there2"}"#;
+        let exn = forward_message(signing_identifier.id.to_string(), msg.to_string());
+        let signature =
+            SelfSigningPrefix::Ed25519Sha512(km1.sign(exn.to_string().as_bytes()).unwrap());
+        let signature = signing_identifier.sign(signature, 0).unwrap();
+        // vh.resolve_oobi(oobi_str).await.unwrap();
+        let r = vh.verify(&exn.to_string(), vec![signature.clone()]).await;
+        dbg!(&r);
+        assert!(matches!(r, Err(MessageboxError::ResponseNotReady(_))));
+        sleep(Duration::from_secs(5)).await;
 
-//         // let r = vh.verify(&s).await.unwrap();
-//         // assert!(r);
-//     }
-// }
+        let r = vh.verify(&exn.to_string(), vec![signature]).await;
+        assert!(r.is_ok());
+    }
+}

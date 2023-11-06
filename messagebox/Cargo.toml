@@ -22,4 +22,4 @@ cesrox = { git = "https://github.com/THCLab/cesrox", tag = "v0.1.4", features = 
 controller = { git = "https://github.com/THCLab/keriox" }
 
 [dev-dependencies]
-tempfile = "3.6.0"
+tempfile = "3.8.1"

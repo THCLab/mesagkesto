@@ -103,3 +103,9 @@ impl ResponsesHandle {
         recv.await.expect("Actor task has been killed")
     }
 }
+
+impl Default for ResponsesHandle {
+     fn default() -> Self {
+         Self::new()
+     }
+ }
