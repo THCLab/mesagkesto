@@ -42,7 +42,7 @@ async fn test_messagebox_location() -> Result<(), Error> {
         .parse()
         .unwrap();
     let message_box_oobi: LocationScheme = serde_json::from_str(&format!(
-        r#"{{"eid":"{}","scheme":"http","url":"http://localhost:8080/"}}"#,
+        r#"{{"eid":"{}","scheme":"http","url":"http://messagebox.sandbox.argo.colossi.network"}}"#,
         message_box_id.to_string()
     ))
     .unwrap();

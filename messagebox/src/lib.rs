@@ -28,7 +28,6 @@ pub enum MessageboxError {
     MissingEvent(IdentifierPrefix),
     #[error("Missing oobi")]
     MissingOobi,
-
 }
 
 pub fn register_token(id: String, token: String) -> MessageType {
