@@ -31,6 +31,7 @@ impl MessageBox {
     pub async fn setup(
         kel_path: &Path,
         oobi_path: &Path,
+        watcher_oobi: LocationScheme,
         address: url::Url,
         seed: Option<String>,
         server_key: Option<String>,
@@ -73,7 +74,7 @@ impl MessageBox {
             notify_handle,
             response_handle.clone(),
         );
-        let verify_handle = VerifyHandle::new(kel_path, validator_handle.clone()).await;
+        let verify_handle = VerifyHandle::new(kel_path, watcher_oobi, validator_handle.clone()).await;
         Ok(Self {
             public_address: address,
             signer,

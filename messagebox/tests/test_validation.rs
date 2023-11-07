@@ -25,10 +25,12 @@ async fn test_validation() -> Result<(), Error> {
     let root = Builder::new().prefix("test-db").tempdir().unwrap();
     let root2 = Builder::new().prefix("test-db").tempdir().unwrap();
     let server_key = "AAAAky1v068:APA91bHHpGtP6M5h3ICFc9AzY35MrkTmjwblkLlEJ1C0yvkrUu7KDkmkXMzPq2q-0o1l49fKxOeDQaKIkZTTEAIX3Jd45j6KNtSempYqop4Psitvz2Ng7iBz-IeS1SGEs1GpnWseJlpP".to_string();
+    let watcher_oobi = serde_json::from_str(r#"{"eid":"BF2t2NPc1bwptY1hYV0YCib1JjQ11k9jtuaZemecPF5b","scheme":"http","url":"http://localhost:3236/"}"#).unwrap();
 
     let messagebox = MessageBox::setup(
         root.path(),
         root2.path(),
+        watcher_oobi,
         Url::parse("http:/blabla.com").unwrap(),
         None,
         Some(server_key),

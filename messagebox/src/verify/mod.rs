@@ -75,10 +75,8 @@ pub struct VerifyHandle {
 }
 
 impl VerifyHandle {
-    pub async fn new(db_path: &Path, validate_handle: ValidateHandle) -> Self {
+    pub async fn new(db_path: &Path, watcher_oobi: LocationScheme, validate_handle: ValidateHandle) -> Self {
         let (sender, receiver) = mpsc::channel(8);
-        let watcher_oobi = serde_json::from_str(r#"{"eid":"BF2t2NPc1bwptY1hYV0YCib1JjQ11k9jtuaZemecPF5b","scheme":"http","url":"http://watcher.sandbox.argo.colossi.network/"}"#).unwrap();
-        // let watcher_oobi = serde_json::from_str(r#"{"eid":"BF2t2NPc1bwptY1hYV0YCib1JjQ11k9jtuaZemecPF5b","scheme":"http","url":"http://localhost:3236/"}"#).unwrap();
         let actor = VerifyActor::setup(db_path, watcher_oobi, None, receiver, validate_handle)
             .await
             .unwrap();
@@ -223,8 +221,9 @@ pub mod test {
             notify_handle,
             response_handle.clone(),
         );
+        let watcher_oobi = serde_json::from_str(r#"{"eid":"BF2t2NPc1bwptY1hYV0YCib1JjQ11k9jtuaZemecPF5b","scheme":"http","url":"http://localhost:3236/"}"#).unwrap();
         let root = Builder::new().prefix("test-db2").tempdir().unwrap();
-        let vh = VerifyHandle::new(root.path(), validator_handle).await;
+        let vh = VerifyHandle::new(root.path(), watcher_oobi, validator_handle).await;
 
         assert!(matches!(
             vh.verify(&msg, vec![signature.clone()]).await,

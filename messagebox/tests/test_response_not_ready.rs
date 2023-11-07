@@ -112,9 +112,10 @@ pub mod test {
 
         let querying_oobi_str = json!({"cid": &querying_identifier.id ,"role":"witness","eid":"BJq7UABlttINuWJh1Xl2lkqZG4NTdUdqnbFJDa6ZyxCC"}).to_string();
         let inserting_oobi_str = json!({"cid": &inserting_identifier.id ,"role":"witness","eid":"BJq7UABlttINuWJh1Xl2lkqZG4NTdUdqnbFJDa6ZyxCC"}).to_string();
+        let watcher_oobi = serde_json::from_str(r#"{"eid":"BF2t2NPc1bwptY1hYV0YCib1JjQ11k9jtuaZemecPF5b","scheme":"http","url":"http://localhost:3236/"}"#).unwrap();
 
         // Setup messagebox
-        let msg_box = MessageBox::setup(messagebox_db.path(), messagebox_oobi_db.path(), "http://url.com".parse().unwrap(), None, Some("AAAAky1v068:APA91bHHpGtP6M5h3ICFc9AzY35MrkTmjwblkLlEJ1C0yvkrUu7KDkmkXMzPq2q-0o1l49fKxOeDQaKIkZTTEAIX3Jd45j6KNtSempYqop4Psitvz2Ng7iBz-IeS1SGEs1GpnWseJlpP".to_string())).await.unwrap();
+        let msg_box = MessageBox::setup(messagebox_db.path(), messagebox_oobi_db.path(), watcher_oobi, "http://url.com".parse().unwrap(), None, Some("AAAAky1v068:APA91bHHpGtP6M5h3ICFc9AzY35MrkTmjwblkLlEJ1C0yvkrUu7KDkmkXMzPq2q-0o1l49fKxOeDQaKIkZTTEAIX3Jd45j6KNtSempYqop4Psitvz2Ng7iBz-IeS1SGEs1GpnWseJlpP".to_string())).await.unwrap();
 
         msg_box
             .resolve_oobi(witness_oobi_st.to_string())
