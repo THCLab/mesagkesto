@@ -2,7 +2,10 @@ use said::derivation::{HashFunction, HashFunctionCode};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 
-use crate::{notifier::NotifyHandle, storage::StorageHandle, MessageboxError};
+use crate::{
+    notifier::NotifyHandle, responses_store::ResponsesHandle, storage::StorageHandle,
+    MessageboxError,
+};
 
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "t")]
@@ -48,6 +51,9 @@ pub enum ValidateMessage {
         // where to return result
         sender: oneshot::Sender<Result<Option<String>, MessageboxError>>,
     },
+    ProcessAndSave {
+        message: String,
+    },
 }
 
 pub struct ValidateActor {
@@ -55,6 +61,7 @@ pub struct ValidateActor {
     receiver: mpsc::Receiver<ValidateMessage>,
     storage: StorageHandle,
     notify: NotifyHandle,
+    responses_handle: ResponsesHandle,
 }
 
 impl ValidateActor {
@@ -62,47 +69,62 @@ impl ValidateActor {
         receiver: mpsc::Receiver<ValidateMessage>,
         storage: StorageHandle,
         notify: NotifyHandle,
+        responses: ResponsesHandle,
     ) -> Self {
         ValidateActor {
             receiver,
             storage,
             notify,
+            responses_handle: responses,
         }
     }
+
+    async fn process(&self, message: &str) -> Result<Option<String>, MessageboxError> {
+        if let Ok(parsed) = serde_json::from_str::<MessageType>(message) {
+            match parsed {
+                MessageType::Qry(qry) => match qry {
+                    QueryArguments::ByDigest { i, d } => {
+                        println!("Getting messages by digest {:?}", &d);
+                        Ok(self.storage.get_by_digest(&i, d).await)
+                    }
+                    QueryArguments::BySn { i, s } => {
+                        println!("Getting messages for {} from index {}", &i, s);
+                        Ok(self.storage.get_by_index(&i, s).await)
+                    }
+                },
+                MessageType::Exn(exn) => match exn {
+                    ExchangeArguments::Fwd { i, a } => {
+                        println!("Saving message {} for {}", &a, &i);
+                        let digest_algo: HashFunction = (HashFunctionCode::Blake3_256).into();
+                        let sai = digest_algo.derive(a.as_bytes()).to_string();
+                        self.storage.save(i.clone(), a, sai).await.to_string();
+                        Ok(None)
+                    }
+                    ExchangeArguments::SetFirebase { i, f: t } => {
+                        self.notify.save_token(i, t).await;
+                        Ok(None)
+                    }
+                },
+            }
+        } else {
+            Err(MessageboxError::UnknownMessage(message.into()))
+        }
+    }
+
     async fn handle_message(&mut self, msg: ValidateMessage) {
         match msg {
             ValidateMessage::Authenticate { message, sender } => {
-                if let Ok(parsed) = serde_json::from_str::<MessageType>(&message) {
-                    let out = match parsed {
-                        MessageType::Qry(qry) => match qry {
-                            QueryArguments::ByDigest { i, d } => {
-                                println!("Getting messages by digest {:?}", &d);
-                                self.storage.get_by_digest(&i, d).await
-                            }
-                            QueryArguments::BySn { i, s } => {
-                                println!("Getting messages for {} from index {}", &i, s);
-                                self.storage.get_by_index(&i, s).await
-                            }
-                        },
-                        MessageType::Exn(exn) => match exn {
-                            ExchangeArguments::Fwd { i, a } => {
-                                println!("Saving message {} for {}", &a, &i);
-                                let digest_algo: HashFunction =
-                                    (HashFunctionCode::Blake3_256).into();
-                                let sai = digest_algo.derive(a.as_bytes()).to_string();
-                                self.storage.save(i.clone(), a, sai).await.to_string();
-                                None
-                            }
-                            ExchangeArguments::SetFirebase { i, f: t } => {
-                                self.notify.save_token(i, t).await;
-                                None
-                            }
-                        },
-                    };
-                    let _ = sender.send(Ok(out));
-                } else {
-                    let _ = sender.send(Err(MessageboxError::UnknownMessage(message.clone())));
-                }
+                let _ = sender.send(self.process(&message).await);
+            }
+            ValidateMessage::ProcessAndSave { message } => {
+                println!("\nIn process and save: {}", message);
+                let out = self.process(&message).await.unwrap();
+                if let Some(to_save) = out {
+                    let digest: said::SelfAddressingIdentifier =
+                        HashFunction::from(HashFunctionCode::Blake3_256)
+                            .derive(message.as_bytes());
+                    self.responses_handle.save(to_save, digest).await;
+                };
             }
         }
     }
@@ -120,9 +142,13 @@ pub struct ValidateHandle {
 }
 
 impl ValidateHandle {
-    pub fn new(storage_handle: StorageHandle, notify_handle: NotifyHandle) -> Self {
+    pub fn new(
+        storage_handle: StorageHandle,
+        notify_handle: NotifyHandle,
+        responses: ResponsesHandle,
+    ) -> Self {
         let (sender, receiver) = mpsc::channel(8);
-        let actor = ValidateActor::new(receiver, storage_handle, notify_handle);
+        let actor = ValidateActor::new(receiver, storage_handle, notify_handle, responses);
         tokio::spawn(run_my_actor(actor));
 
         Self {
@@ -148,5 +174,14 @@ impl ValidateHandle {
                 Err(MessageboxError::KilledSender)
             }
         }
+    }
+
+    pub async fn process_and_save(&self, message: String) {
+        let msg = ValidateMessage::ProcessAndSave { message };
+
+        // Ignore send errors. If this send fails, so does the
+        // recv.await below. There's no reason to check for the
+        // same failure twice.
+        let _ = self.validate_sender.send(msg).await;
     }
 }

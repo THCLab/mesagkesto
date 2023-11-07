@@ -1,3 +1,5 @@
+use controller::{error::ControllerError, IdentifierPrefix};
+use keri::actor::prelude::SelfAddressingIdentifier;
 use thiserror::Error;
 use url::Url;
 use validate::ExchangeArguments;
@@ -6,8 +8,11 @@ pub mod messagebox;
 pub mod messagebox_listener;
 pub mod notifier;
 pub mod oobis;
+mod responses_store;
 pub mod storage;
 pub mod validate;
+pub mod verify;
+
 use crate::validate::MessageType;
 
 #[derive(Error, Debug)]
@@ -18,6 +23,24 @@ pub enum MessageboxError {
     UnknownMessage(String),
     #[error("Actor task has been killed")]
     KilledSender,
+    #[error(transparent)]
+    Controller(#[from] ControllerError),
+    #[error(transparent)]
+    Keri(#[from] keri::error::Error),
+    #[error("Verification failed")]
+    VerificationFailure,
+    #[error("Kel event not in database")]
+    MissingEvent(IdentifierPrefix, SelfAddressingIdentifier),
+    #[error("Missing oobi")]
+    MissingOobi,
+    #[error("Can't parse oobi")]
+    OobiParsingError,
+    #[error("Can't parse seed")]
+    SeedParsingError,
+    #[error(transparent)]
+    OobiError(ControllerError),
+    #[error("Response not ready")]
+    ResponseNotReady(SelfAddressingIdentifier),
 }
 
 pub fn register_token(id: String, token: String) -> MessageType {

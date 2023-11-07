@@ -33,7 +33,15 @@ impl MessageBoxListener {
                 )
                 .route(
                     "/",
-                    actix_web::web::post().to(http_handlers::validate_message),
+                    actix_web::web::post().to(http_handlers::process_message),
+                )
+                .route(
+                    "/resolve",
+                    actix_web::web::post().to(http_handlers::resolve_oobi),
+                )
+                .route(
+                    "/messages/{said}",
+                    actix_web::web::get().to(http_handlers::get_response),
                 )
         })
         .bind(addr)
@@ -45,7 +53,7 @@ impl MessageBoxListener {
 mod http_handlers {
     use std::sync::Arc;
 
-    use crate::messagebox::MessageBox;
+    use crate::{messagebox::MessageBox, MessageboxError};
     use actix_web::{http::header::ContentType, web, HttpResponse};
     use keri::{
         actor::parse_reply_stream,
@@ -54,6 +62,7 @@ mod http_handlers {
         prefix::IdentifierPrefix,
         query::reply_event::SignedReply,
     };
+    use said::SelfAddressingIdentifier;
 
     use super::ApiError;
 
@@ -106,16 +115,27 @@ mod http_handlers {
             .body(String::from_utf8(oobis).unwrap()))
     }
 
-    pub async fn validate_message(
+    pub async fn process_message(
         body: String,
         data: web::Data<Arc<MessageBox>>,
     ) -> Result<HttpResponse, ApiError> {
-        Ok(match data.validator_handle.validate(body).await {
+        Ok(match data.process_message(body).await {
             Ok(Some(response)) => HttpResponse::Ok().body(response),
             Ok(None) => HttpResponse::Ok().finish(),
+            Err(MessageboxError::VerificationFailure) => HttpResponse::Unauthorized().finish(),
+            Err(MessageboxError::ResponseNotReady(said)) => {
+                let message = format!(
+                    "Missing event, need to ask later on `/messages/{}` endpoint.",
+                    said
+                );
+                HttpResponse::Accepted().body(message)
+            }
+            Err(MessageboxError::MissingOobi) => {
+                let message = "Missing oobi, need to be provided to `/resolve` endpoint.".to_string();
+                HttpResponse::UnprocessableEntity().body(message)
+            }
             Err(err) => {
                 let message = format!("Message ignored due to error: {}", &err);
-                println!("{}", &message);
                 HttpResponse::BadRequest().body(message)
             }
         })
@@ -135,6 +155,36 @@ mod http_handlers {
         Ok(HttpResponse::Ok()
             .content_type(ContentType::plaintext())
             .body(()))
+    }
+
+    pub async fn resolve_oobi(
+        body: web::Bytes,
+        data: web::Data<Arc<MessageBox>>,
+    ) -> Result<HttpResponse, ApiError> {
+        println!(
+            "\nGot oobi to resolve: \n{}",
+            String::from_utf8_lossy(&body)
+        );
+
+        data.resolve_oobi(String::from_utf8(body.to_vec()).unwrap())
+            .await
+            .unwrap();
+
+        Ok(HttpResponse::Ok().finish())
+    }
+
+    pub async fn get_response(
+        said: web::Path<SelfAddressingIdentifier>,
+        data: web::Data<Arc<MessageBox>>,
+    ) -> Result<HttpResponse, ApiError> {
+        println!("\nRequest responses for: \n{}", &said.to_string());
+
+        data.response_handle
+            .get_by_digest(said.into_inner())
+            .await
+            .unwrap();
+
+        Ok(HttpResponse::Ok().finish())
     }
 }
 

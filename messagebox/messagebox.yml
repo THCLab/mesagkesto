@@ -1,3 +1,4 @@
+db_path: "./db/"
 oobi_path: "./oobi/"
 http_port: 8080
 public_url: "http://localhost:8080/"
