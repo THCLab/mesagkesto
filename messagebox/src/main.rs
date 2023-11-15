@@ -87,10 +87,10 @@ async fn main() -> Result<()> {
     let listener = MessageBoxListener { messagebox: data };
     println!(
         "Messagebox is listening. It's oobi is: {}",
-        serde_json::to_string(&messagebox_oobi).unwrap()
+        serde_json::to_string(&messagebox_oobi).map_err(|_e| MessageboxError::OobiParsingError)?
     );
     listener
-        .listen_http((Ipv4Addr::UNSPECIFIED, cfg.http_port))
+        .listen_http((Ipv4Addr::UNSPECIFIED, cfg.http_port))?
         .await?;
     Ok(())
 }

@@ -60,10 +60,8 @@ impl VerifyData {
         );
         let end_role = id.add_watcher(watcher_oobi.eid)?;
         let signature = signer.sign(end_role.clone()).await?;
-
         id.finalize_event(end_role.as_bytes(), signature)
-            .await
-            .unwrap();
+            .await?;
         Ok(VerifyData {
             signer: signer.clone(),
             controller: id,

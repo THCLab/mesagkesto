@@ -1,18 +1,21 @@
-use crate::messagebox::MessageBox;
+use crate::{messagebox::MessageBox, MessageboxError};
 use actix_web::{
     dev::Server, http::StatusCode, web::Data, App, HttpResponse, HttpServer, ResponseError,
 };
-use keri::database::DbError;
+use controller::{IdentifierPrefix, messagebox};
+use keri::{database::DbError, oobi::Role};
+use said::SelfAddressingIdentifier;
 use std::{net::ToSocketAddrs, sync::Arc};
+use anyhow::Result;
 
 pub struct MessageBoxListener {
     pub messagebox: MessageBox,
 }
 
 impl MessageBoxListener {
-    pub fn listen_http(&self, addr: impl ToSocketAddrs) -> Server {
+    pub fn listen_http(&self, addr: impl ToSocketAddrs) -> Result<Server> {
         let state = Data::new(Arc::new(self.messagebox.clone()));
-        HttpServer::new(move || {
+        Ok(HttpServer::new(move || {
             App::new()
                 .app_data(state.clone())
                 .route(
@@ -44,9 +47,8 @@ impl MessageBoxListener {
                     actix_web::web::get().to(http_handlers::get_response),
                 )
         })
-        .bind(addr)
-        .unwrap()
-        .run()
+        .bind(addr)?
+        .run())
     }
 }
 
@@ -66,13 +68,13 @@ mod http_handlers {
 
     use super::ApiError;
 
-    pub fn oobis_to_cesr_stream(oobis: impl Iterator<Item = SignedReply>) -> Vec<u8> {
-        oobis
-            .flat_map(|sr| {
-                let sed = Message::Op(Op::Reply(sr));
-                sed.to_cesr().unwrap()
+    fn oobis_to_cesr_stream(oobis: &mut impl Iterator<Item = SignedReply>) -> Result<Vec<u8>, ApiError> {
+            oobis.try_fold(vec![], |mut acc, sr| {
+                let mut oobi = Message::Op(Op::Reply(sr)).to_cesr()?;
+                
+                acc.append(&mut oobi);
+                Ok(acc)
             })
-            .collect::<Vec<_>>()
     }
 
     pub async fn introduce(data: web::Data<Arc<MessageBox>>) -> Result<HttpResponse, ApiError> {
@@ -87,11 +89,11 @@ mod http_handlers {
     ) -> Result<HttpResponse, ApiError> {
         let loc_scheme = data.get_loc_scheme_for_id(&eid).await?.unwrap_or_default();
 
-        let oobis: Vec<u8> = oobis_to_cesr_stream(loc_scheme.into_iter());
+        let oobis: Vec<u8> = oobis_to_cesr_stream(&mut loc_scheme.into_iter())?;
 
         Ok(HttpResponse::Ok()
             .content_type(ContentType::plaintext())
-            .body(String::from_utf8(oobis).unwrap()))
+            .body(oobis))
     }
 
     pub async fn get_cid_oobi(
@@ -100,19 +102,19 @@ mod http_handlers {
     ) -> Result<HttpResponse, ApiError> {
         let (cid, role, eid) = path.into_inner();
 
-        let end_role_feature = data.oobi_handle.get_role_oobi(cid, role, eid.clone());
+        let end_role_feature = data.oobi_handle.get_role_oobi(cid.clone(), role.clone(), eid.clone());
         let loc_scheme_feature = data.get_loc_scheme_for_id(&eid);
         let (end_role, loc_scheme) = tokio::join!(end_role_feature, loc_scheme_feature);
         let oobis = oobis_to_cesr_stream(
-            end_role
-                .unwrap()
+            &mut end_role
+                .ok_or(ApiError::MissingEndRoleOobi(cid, role))?
                 .into_iter()
                 .chain(loc_scheme?.unwrap_or_default().into_iter()),
-        );
+        )?;
 
         Ok(HttpResponse::Ok()
             .content_type(ContentType::plaintext())
-            .body(String::from_utf8(oobis).unwrap()))
+            .body(oobis))
     }
 
     pub async fn process_message(
@@ -149,7 +151,7 @@ mod http_handlers {
             "\nGot oobis to process: \n{}",
             String::from_utf8_lossy(&body)
         );
-        let replys = parse_reply_stream(&body).unwrap();
+        let replys = parse_reply_stream(&body)?;
         data.oobi_handle.register(replys).await;
 
         Ok(HttpResponse::Ok()
@@ -161,14 +163,14 @@ mod http_handlers {
         body: web::Bytes,
         data: web::Data<Arc<MessageBox>>,
     ) -> Result<HttpResponse, ApiError> {
+        let oobi_str = String::from_utf8(body.to_vec()).map_err(|e| ApiError::Unparsable)?;
         println!(
             "\nGot oobi to resolve: \n{}",
-            String::from_utf8_lossy(&body)
+            &oobi_str
         );
 
-        data.resolve_oobi(String::from_utf8(body.to_vec()).unwrap())
-            .await
-            .unwrap();
+        data.resolve_oobi(oobi_str.clone())
+            .await?;
 
         Ok(HttpResponse::Ok().finish())
     }
@@ -178,11 +180,11 @@ mod http_handlers {
         data: web::Data<Arc<MessageBox>>,
     ) -> Result<HttpResponse, ApiError> {
         println!("\nRequest responses for: \n{}", &said.to_string());
-
+        let sai = said.into_inner();
         data.response_handle
-            .get_by_digest(said.into_inner())
+            .get_by_digest(sai.clone())
             .await
-            .unwrap();
+            .ok_or(ApiError::UnknownResponse(sai))?;
 
         Ok(HttpResponse::Ok().finish())
     }
@@ -194,6 +196,15 @@ pub enum ApiError {
     KeriError(#[from] keri::error::Error),
     #[error(transparent)]
     KeriDbError(#[from] DbError),
+    #[error(transparent)]
+    MessageboxError(#[from] MessageboxError),
+    #[error("Can't be parsed")]
+    Unparsable,
+    #[error("No end role oobi of identifier: {0}, {1:?}")]
+    MissingEndRoleOobi(IdentifierPrefix, Role),
+    #[error("Unknown response said: {0}")]
+    UnknownResponse(SelfAddressingIdentifier)
+
 }
 
 impl ResponseError for ApiError {
