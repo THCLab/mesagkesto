@@ -60,8 +60,7 @@ impl VerifyData {
         );
         let end_role = id.add_watcher(watcher_oobi.eid)?;
         let signature = signer.sign(end_role.clone()).await?;
-        id.finalize_event(end_role.as_bytes(), signature)
-            .await?;
+        id.finalize_event(end_role.as_bytes(), signature).await?;
         Ok(VerifyData {
             signer: signer.clone(),
             controller: id,
@@ -84,11 +83,7 @@ impl VerifyData {
                         if let Ok(r) =
                             storage.get_keys_at_event(&es.prefix, es.sn, &es.event_digest)
                         {
-                            (
-                                r,
-                                es.prefix.clone(),
-                                Some(es.event_digest.clone()),
-                            )
+                            (r, es.prefix.clone(), Some(es.event_digest.clone()))
                         } else {
                             (None, es.prefix.clone(), Some(es.event_digest.clone()))
                         }
@@ -213,8 +208,7 @@ impl VerifyData {
                     }
 
                     let digest: said::SelfAddressingIdentifier =
-                        HashFunction::from(HashFunctionCode::Blake3_256)
-                            .derive(message.as_bytes());
+                        HashFunction::from(HashFunctionCode::Blake3_256).derive(message.as_bytes());
                     Err(MessageboxError::ResponseNotReady(digest))
                 } else {
                     Err(MessageboxError::MissingOobi)

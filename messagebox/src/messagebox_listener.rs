@@ -2,11 +2,11 @@ use crate::{messagebox::MessageBox, MessageboxError};
 use actix_web::{
     dev::Server, http::StatusCode, web::Data, App, HttpResponse, HttpServer, ResponseError,
 };
-use controller::{IdentifierPrefix, messagebox};
+use anyhow::Result;
+use controller::{messagebox, IdentifierPrefix};
 use keri::{database::DbError, oobi::Role};
 use said::SelfAddressingIdentifier;
 use std::{net::ToSocketAddrs, sync::Arc};
-use anyhow::Result;
 
 pub struct MessageBoxListener {
     pub messagebox: MessageBox,
@@ -68,13 +68,15 @@ mod http_handlers {
 
     use super::ApiError;
 
-    fn oobis_to_cesr_stream(oobis: &mut impl Iterator<Item = SignedReply>) -> Result<Vec<u8>, ApiError> {
-            oobis.try_fold(vec![], |mut acc, sr| {
-                let mut oobi = Message::Op(Op::Reply(sr)).to_cesr()?;
-                
-                acc.append(&mut oobi);
-                Ok(acc)
-            })
+    fn oobis_to_cesr_stream(
+        oobis: &mut impl Iterator<Item = SignedReply>,
+    ) -> Result<Vec<u8>, ApiError> {
+        oobis.try_fold(vec![], |mut acc, sr| {
+            let mut oobi = Message::Op(Op::Reply(sr)).to_cesr()?;
+
+            acc.append(&mut oobi);
+            Ok(acc)
+        })
     }
 
     pub async fn introduce(data: web::Data<Arc<MessageBox>>) -> Result<HttpResponse, ApiError> {
@@ -102,7 +104,9 @@ mod http_handlers {
     ) -> Result<HttpResponse, ApiError> {
         let (cid, role, eid) = path.into_inner();
 
-        let end_role_feature = data.oobi_handle.get_role_oobi(cid.clone(), role.clone(), eid.clone());
+        let end_role_feature =
+            data.oobi_handle
+                .get_role_oobi(cid.clone(), role.clone(), eid.clone());
         let loc_scheme_feature = data.get_loc_scheme_for_id(&eid);
         let (end_role, loc_scheme) = tokio::join!(end_role_feature, loc_scheme_feature);
         let oobis = oobis_to_cesr_stream(
@@ -133,7 +137,8 @@ mod http_handlers {
                 HttpResponse::Accepted().body(message)
             }
             Err(MessageboxError::MissingOobi) => {
-                let message = "Missing oobi, need to be provided to `/resolve` endpoint.".to_string();
+                let message =
+                    "Missing oobi, need to be provided to `/resolve` endpoint.".to_string();
                 HttpResponse::UnprocessableEntity().body(message)
             }
             Err(err) => {
@@ -164,13 +169,9 @@ mod http_handlers {
         data: web::Data<Arc<MessageBox>>,
     ) -> Result<HttpResponse, ApiError> {
         let oobi_str = String::from_utf8(body.to_vec()).map_err(|e| ApiError::Unparsable)?;
-        println!(
-            "\nGot oobi to resolve: \n{}",
-            &oobi_str
-        );
+        println!("\nGot oobi to resolve: \n{}", &oobi_str);
 
-        data.resolve_oobi(oobi_str.clone())
-            .await?;
+        data.resolve_oobi(oobi_str.clone()).await?;
 
         Ok(HttpResponse::Ok().finish())
     }
@@ -203,8 +204,7 @@ pub enum ApiError {
     #[error("No end role oobi of identifier: {0}, {1:?}")]
     MissingEndRoleOobi(IdentifierPrefix, Role),
     #[error("Unknown response said: {0}")]
-    UnknownResponse(SelfAddressingIdentifier)
-
+    UnknownResponse(SelfAddressingIdentifier),
 }
 
 impl ResponseError for ApiError {

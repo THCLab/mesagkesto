@@ -75,7 +75,11 @@ pub struct VerifyHandle {
 }
 
 impl VerifyHandle {
-    pub async fn new(db_path: &Path, watcher_oobi: LocationScheme, validate_handle: ValidateHandle) -> Self {
+    pub async fn new(
+        db_path: &Path,
+        watcher_oobi: LocationScheme,
+        validate_handle: ValidateHandle,
+    ) -> Self {
         let (sender, receiver) = mpsc::channel(8);
         let actor = VerifyActor::setup(db_path, watcher_oobi, None, receiver, validate_handle)
             .await

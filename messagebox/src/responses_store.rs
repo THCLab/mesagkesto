@@ -105,7 +105,7 @@ impl ResponsesHandle {
 }
 
 impl Default for ResponsesHandle {
-     fn default() -> Self {
-         Self::new()
-     }
- }
+    fn default() -> Self {
+        Self::new()
+    }
+}

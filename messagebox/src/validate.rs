@@ -121,8 +121,7 @@ impl ValidateActor {
                 let out = self.process(&message).await.unwrap();
                 if let Some(to_save) = out {
                     let digest: said::SelfAddressingIdentifier =
-                        HashFunction::from(HashFunctionCode::Blake3_256)
-                            .derive(message.as_bytes());
+                        HashFunction::from(HashFunctionCode::Blake3_256).derive(message.as_bytes());
                     self.responses_handle.save(to_save, digest).await;
                 };
             }

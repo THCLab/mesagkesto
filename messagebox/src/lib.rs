@@ -17,7 +17,7 @@ use crate::validate::MessageType;
 
 #[derive(Error, Debug)]
 pub enum MessageboxError {
-    #[error("Can't communicate to cread agent: {0}")]
+    #[error("Can't communicate to: {0}")]
     Communication(String),
     #[error("Unknown message format: {0}")]
     UnknownMessage(String),
@@ -41,6 +41,8 @@ pub enum MessageboxError {
     OobiError(ControllerError),
     #[error("Response not ready")]
     ResponseNotReady(SelfAddressingIdentifier),
+    #[error("Unparsable: {0}")]
+    Unparsable(String),
 }
 
 pub fn register_token(id: String, token: String) -> MessageType {

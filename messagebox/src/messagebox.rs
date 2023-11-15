@@ -35,29 +35,29 @@ impl MessageBox {
         address: url::Url,
         seed: Option<String>,
         server_key: Option<String>,
-    ) -> Result<Self, Error> {
+    ) -> Result<Self, MessageboxError> {
         let signer = Arc::new(
             seed.map(|key| Signer::new_with_seed(&key.parse()?))
                 .unwrap_or_else(|| Ok(Signer::new()))?,
         );
         let id = BasicPrefix::Ed25519NT(signer.public_key());
+        let scheme = address
+            .scheme()
+            .parse()
+            .map_err(|_e| MessageboxError::Unparsable(address.scheme().to_string()))?;
         // save own oobi
-        let loc_scheme = LocationScheme::new(
-            IdentifierPrefix::Basic(id.clone()),
-            address.scheme().parse().unwrap(),
-            address.clone(),
-        );
+        let loc_scheme =
+            LocationScheme::new(IdentifierPrefix::Basic(id.clone()), scheme, address.clone());
 
         let reply = ReplyEvent::new_reply(
             ReplyRoute::LocScheme(loc_scheme),
             HashFunctionCode::Blake3_256,
             SerializationFormats::JSON,
-        )
-        .unwrap();
+        )?;
         let signed_reply = SignedReply::new_nontrans(
             reply.clone(),
             id.clone(),
-            SelfSigningPrefix::Ed25519Sha512(signer.sign(reply.encode().unwrap()).unwrap()),
+            SelfSigningPrefix::Ed25519Sha512(signer.sign(reply.encode()?)?),
         );
         let notify_handle = if let Some(key) = server_key {
             println!("Firebase server key set: {}", &key);
@@ -74,7 +74,8 @@ impl MessageBox {
             notify_handle,
             response_handle.clone(),
         );
-        let verify_handle = VerifyHandle::new(kel_path, watcher_oobi, validator_handle.clone()).await;
+        let verify_handle =
+            VerifyHandle::new(kel_path, watcher_oobi, validator_handle.clone()).await;
         Ok(Self {
             public_address: address,
             signer,
@@ -87,17 +88,15 @@ impl MessageBox {
     }
 
     pub async fn process_message(&self, body: String) -> Result<Option<String>, MessageboxError> {
-        let (data, signatures) = Self::split_cesr_stream(body.as_bytes());
+        let (data, signatures) = Self::split_cesr_stream(body.as_bytes())?;
+        let payload_str =
+            String::from_utf8(data).map_err(|e| MessageboxError::Unparsable(e.to_string()))?;
         match self
             .verify_handle
-            .verify(std::str::from_utf8(&data).unwrap(), signatures.collect())
+            .verify(&payload_str, signatures.collect())
             .await
         {
-            Ok(_) => {
-                self.validator_handle
-                    .validate(String::from_utf8(data).unwrap())
-                    .await
-            }
+            Ok(_) => self.validator_handle.validate(payload_str).await,
             // Err(MessageboxError::MissingEvent(id, dig )) => {
             // },
             Err(e) => Err(e),
@@ -122,27 +121,32 @@ impl MessageBox {
         eid: &IdentifierPrefix,
     ) -> Result<Option<Vec<SignedReply>>, Error> {
         let oobis = self.oobi_handle.get_location(eid.clone()).await;
-        Ok(oobis.map(|oobis_to_sign| {
-            oobis_to_sign
-                .iter()
-                .map(|oobi_to_sing| {
-                    let signature = self.signer.sign(oobi_to_sing.encode().unwrap()).unwrap();
-                    SignedReply::new_nontrans(
-                        oobi_to_sing.clone(),
-                        self.identifier.clone(),
-                        SelfSigningPrefix::Ed25519Sha512(signature),
-                    )
-                })
-                .collect()
-        }))
+        oobis
+            .map(|oobis_to_sign| -> Result<_, Error> {
+                oobis_to_sign
+                    .iter()
+                    .map(|oobi_to_sing| -> Result<_, Error> {
+                        let signature = self.signer.sign(oobi_to_sing.encode()?)?;
+                        Ok(SignedReply::new_nontrans(
+                            oobi_to_sing.clone(),
+                            self.identifier.clone(),
+                            SelfSigningPrefix::Ed25519Sha512(signature),
+                        ))
+                    })
+                    .collect()
+            })
+            .transpose()
     }
 
     pub async fn get_responses(&self, sai: SelfAddressingIdentifier) -> Option<String> {
         self.response_handle.get_by_digest(sai).await
     }
 
-    fn split_cesr_stream(input: &[u8]) -> (Vec<u8>, impl Iterator<Item = Signature>) {
-        let (_rest, parsed_data) = cesrox::parse(input).unwrap();
+    fn split_cesr_stream(
+        input: &[u8],
+    ) -> Result<(Vec<u8>, impl Iterator<Item = Signature>), MessageboxError> {
+        let (_rest, parsed_data) =
+            cesrox::parse(input).map_err(|e| MessageboxError::Unparsable(e.to_string()))?;
         let data = match parsed_data.payload {
             cesrox::payload::Payload::JSON(json) => json,
             cesrox::payload::Payload::CBOR(_) => todo!(),
@@ -151,7 +155,16 @@ impl MessageBox {
         let signatures = parsed_data
             .attachments
             .into_iter()
-            .flat_map(|g| get_signatures(g).unwrap());
-        (data, signatures)
+            .map(|g| get_signatures(g))
+            // This ignore errors while getting signatures
+            .filter_map(|sig| {
+                if let Ok(signature) = sig {
+                    Some(signature)
+                } else {
+                    None
+                }
+            })
+            .flatten();
+        Ok((data, signatures))
     }
 }

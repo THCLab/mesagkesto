@@ -7,7 +7,9 @@ use figment::{
     providers::{Format, Serialized, Yaml},
     Figment,
 };
-use messagebox::{messagebox::MessageBox, messagebox_listener::MessageBoxListener, MessageboxError};
+use messagebox::{
+    messagebox::MessageBox, messagebox_listener::MessageBoxListener, MessageboxError,
+};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
@@ -70,8 +72,9 @@ async fn main() -> Result<()> {
         .merge(Serialized::defaults(args))
         .extract::<Config>()
         .context("Failed to load config")?;
-    
-    let watcher_oobi: LocationScheme = serde_json::from_str(&cfg.watcher_oobi).map_err(|e| MessageboxError::OobiParsingError)?;
+
+    let watcher_oobi: LocationScheme =
+        serde_json::from_str(&cfg.watcher_oobi).map_err(|e| MessageboxError::OobiParsingError)?;
 
     let data = MessageBox::setup(
         &cfg.db_path,
