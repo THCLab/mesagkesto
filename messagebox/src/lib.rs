@@ -1,5 +1,5 @@
 use controller::{error::ControllerError, IdentifierPrefix};
-use keri::actor::prelude::SelfAddressingIdentifier;
+use keri::{actor::prelude::SelfAddressingIdentifier, keys::KeysError};
 use thiserror::Error;
 use url::Url;
 use validate::ExchangeArguments;
@@ -43,6 +43,8 @@ pub enum MessageboxError {
     ResponseNotReady(SelfAddressingIdentifier),
     #[error("Unparsable: {0}")]
     Unparsable(String),
+    #[error(transparent)]
+    SigningError(#[from] KeysError),
 }
 
 pub fn register_token(id: String, token: String) -> MessageType {

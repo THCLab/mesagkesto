@@ -75,7 +75,7 @@ impl MessageBox {
             response_handle.clone(),
         );
         let verify_handle =
-            VerifyHandle::new(kel_path, watcher_oobi, validator_handle.clone()).await;
+            VerifyHandle::new(kel_path, watcher_oobi, validator_handle.clone()).await?;
         Ok(Self {
             public_address: address,
             signer,

@@ -51,7 +51,7 @@ impl VerifyData {
             ..Default::default()
         })?);
         let oobi = controller::Oobi::Location(watcher_oobi.clone());
-        controller.resolve_oobi(oobi).await.unwrap();
+        controller.resolve_oobi(oobi).await?;
 
         let id = IdentifierController::new(
             controller::IdentifierPrefix::Basic(identifier.clone()),

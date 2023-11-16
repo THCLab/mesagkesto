@@ -3,8 +3,8 @@ use actix_web::{
     dev::Server, http::StatusCode, web::Data, App, HttpResponse, HttpServer, ResponseError,
 };
 use anyhow::Result;
-use controller::{messagebox, IdentifierPrefix};
-use keri::{database::DbError, oobi::Role};
+use controller::IdentifierPrefix;
+use keri::{database::DbError, event_message::cesr_adapter::ParseError, oobi::Role};
 use said::SelfAddressingIdentifier;
 use std::{net::ToSocketAddrs, sync::Arc};
 
@@ -168,7 +168,7 @@ mod http_handlers {
         body: web::Bytes,
         data: web::Data<Arc<MessageBox>>,
     ) -> Result<HttpResponse, ApiError> {
-        let oobi_str = String::from_utf8(body.to_vec()).map_err(|e| ApiError::Unparsable)?;
+        let oobi_str = String::from_utf8(body.to_vec()).map_err(|_e| ApiError::Unparsable)?;
         println!("\nGot oobi to resolve: \n{}", &oobi_str);
 
         data.resolve_oobi(oobi_str.clone()).await?;
@@ -195,6 +195,8 @@ mod http_handlers {
 pub enum ApiError {
     #[error(transparent)]
     KeriError(#[from] keri::error::Error),
+    #[error(transparent)]
+    ParseError(#[from] ParseError),
     #[error(transparent)]
     KeriDbError(#[from] DbError),
     #[error(transparent)]

@@ -79,16 +79,15 @@ impl VerifyHandle {
         db_path: &Path,
         watcher_oobi: LocationScheme,
         validate_handle: ValidateHandle,
-    ) -> Self {
+    ) -> Result<Self, MessageboxError> {
         let (sender, receiver) = mpsc::channel(8);
-        let actor = VerifyActor::setup(db_path, watcher_oobi, None, receiver, validate_handle)
-            .await
-            .unwrap();
+        let actor =
+            VerifyActor::setup(db_path, watcher_oobi, None, receiver, validate_handle).await?;
         tokio::spawn(run_my_actor(actor));
 
-        Self {
+        Ok(Self {
             validate_sender: sender,
-        }
+        })
     }
 
     pub async fn resolve_oobi(&self, message: String) -> Result<(), MessageboxError> {
@@ -153,7 +152,7 @@ pub mod test {
     };
 
     #[actix_web::test]
-    async fn test_verify_handle() {
+    async fn test_verify_handle() -> Result<(), MessageboxError> {
         use keri::signer::CryptoBox;
         let root = Builder::new().prefix("test-db").tempdir().unwrap();
         let cont = Arc::new(
@@ -227,7 +226,7 @@ pub mod test {
         );
         let watcher_oobi = serde_json::from_str(r#"{"eid":"BF2t2NPc1bwptY1hYV0YCib1JjQ11k9jtuaZemecPF5b","scheme":"http","url":"http://localhost:3236/"}"#).unwrap();
         let root = Builder::new().prefix("test-db2").tempdir().unwrap();
-        let vh = VerifyHandle::new(root.path(), watcher_oobi, validator_handle).await;
+        let vh = VerifyHandle::new(root.path(), watcher_oobi, validator_handle).await?;
 
         assert!(matches!(
             vh.verify(&msg, vec![signature.clone()]).await,
@@ -291,5 +290,6 @@ pub mod test {
 
         let r = vh.verify(&exn.to_string(), vec![signature]).await;
         assert!(r.is_ok());
+        Ok(())
     }
 }

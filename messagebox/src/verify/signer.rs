@@ -1,5 +1,5 @@
 use controller::{BasicPrefix, SelfSigningPrefix};
-use keri::{error::Error, signer::Signer};
+use keri::{keys::KeysError, signer::Signer};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::MessageboxError;
@@ -8,7 +8,7 @@ use crate::MessageboxError;
 pub enum SignerMessage {
     Sign {
         data: String,
-        sender: oneshot::Sender<Result<SelfSigningPrefix, Error>>,
+        sender: oneshot::Sender<Result<SelfSigningPrefix, KeysError>>,
     },
     PublicKey {
         sender: oneshot::Sender<BasicPrefix>,

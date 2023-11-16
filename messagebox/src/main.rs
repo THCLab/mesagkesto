@@ -74,7 +74,7 @@ async fn main() -> Result<()> {
         .context("Failed to load config")?;
 
     let watcher_oobi: LocationScheme =
-        serde_json::from_str(&cfg.watcher_oobi).map_err(|e| MessageboxError::OobiParsingError)?;
+        serde_json::from_str(&cfg.watcher_oobi).map_err(|_e| MessageboxError::OobiParsingError)?;
 
     let data = MessageBox::setup(
         &cfg.db_path,
