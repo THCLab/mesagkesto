@@ -9,7 +9,7 @@ use keri::{
     query::reply_event::{ReplyEvent, ReplyRoute, SignedReply},
     signer::Signer,
 };
-use said::SelfAddressingIdentifier;
+use keri::actor::prelude::SelfAddressingIdentifier;
 
 use crate::{
     notifier::NotifyHandle, oobis::OobiHandle, responses_store::ResponsesHandle,

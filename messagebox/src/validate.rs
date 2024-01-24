@@ -1,4 +1,4 @@
-use said::derivation::{HashFunction, HashFunctionCode};
+use keri::actor::prelude::{HashFunction, HashFunctionCode};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 
@@ -120,7 +120,7 @@ impl ValidateActor {
                 println!("\nIn process and save: {}", message);
                 let out = self.process(&message).await.unwrap();
                 if let Some(to_save) = out {
-                    let digest: said::SelfAddressingIdentifier =
+                    let digest: keri::actor::prelude::SelfAddressingIdentifier =
                         HashFunction::from(HashFunctionCode::Blake3_256).derive(message.as_bytes());
                     self.responses_handle.save(to_save, digest).await;
                 };

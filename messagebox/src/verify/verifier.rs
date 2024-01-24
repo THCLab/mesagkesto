@@ -15,7 +15,7 @@ use keri::{
     processor::event_storage::EventStorage,
     transport::TransportError,
 };
-use said::derivation::{HashFunction, HashFunctionCode};
+use keri::actor::prelude::{HashFunction, HashFunctionCode};
 use tokio::{sync::Mutex, time::sleep};
 
 use crate::{validate::ValidateHandle, MessageboxError};
@@ -207,7 +207,7 @@ impl VerifyData {
                             .push_back(VerificationTask::Find(id.clone()));
                     }
 
-                    let digest: said::SelfAddressingIdentifier =
+                    let digest: keri::actor::prelude::SelfAddressingIdentifier =
                         HashFunction::from(HashFunctionCode::Blake3_256).derive(message.as_bytes());
                     Err(MessageboxError::ResponseNotReady(digest))
                 } else {

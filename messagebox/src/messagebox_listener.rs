@@ -5,7 +5,7 @@ use actix_web::{
 use anyhow::Result;
 use controller::IdentifierPrefix;
 use keri::{database::DbError, event_message::cesr_adapter::ParseError, oobi::Role};
-use said::SelfAddressingIdentifier;
+use keri::actor::prelude::SelfAddressingIdentifier;
 use std::{net::ToSocketAddrs, sync::Arc};
 
 pub struct MessageBoxListener {
@@ -64,7 +64,7 @@ mod http_handlers {
         prefix::IdentifierPrefix,
         query::reply_event::SignedReply,
     };
-    use said::SelfAddressingIdentifier;
+    use keri::actor::prelude::SelfAddressingIdentifier;
 
     use super::ApiError;
 
