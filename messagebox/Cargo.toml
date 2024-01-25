@@ -8,7 +8,7 @@ edition = "2021"
 [dependencies]
 actix-web = "4.3.1"
 serde_json = "1.0.96"
-keri = {git = "https://github.com/THCLab/keriox", features = ["oobi", "query", "mailbox"]}
+keri-core = { version = "0.9.0", features = ["oobi", "query", "mailbox"]}
 url = "2.4.0"
 thiserror = "1.0.43"
 figment = { version = "0.10.6", features = ["yaml", "env"] }
@@ -17,9 +17,9 @@ clap = { version = "4.1.1", features = ["derive"] }
 anyhow = { version = "1.0.56" }
 tokio = {version = "1.29.1", features = ["sync", "rt", "macros", "rt-multi-thread", "time"]}
 ureq = {version = "2.6.2", features = ["json"]}
-said = {git = "https://github.com/THCLab/cesrox", tag = "v0.1.4"}
+said = {version = "0.4.0"}
 cesrox = { version = "0.1.4", features = ["cesr-proof"]}
-controller = { git = "https://github.com/THCLab/keriox" }
+keri-controller = { version = "0.1.1" }
 
 [dev-dependencies]
 tempfile = "3.8.1"

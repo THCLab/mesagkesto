@@ -1,6 +1,7 @@
 use std::{path::Path, sync::Arc};
 
-use keri::{
+use keri_core::actor::prelude::SelfAddressingIdentifier;
+use keri_core::{
     actor::prelude::{HashFunctionCode, SerializationFormats},
     error::Error,
     event_message::signature::{get_signatures, Signature},
@@ -9,7 +10,6 @@ use keri::{
     query::reply_event::{ReplyEvent, ReplyRoute, SignedReply},
     signer::Signer,
 };
-use keri::actor::prelude::SelfAddressingIdentifier;
 
 use crate::{
     notifier::NotifyHandle, oobis::OobiHandle, responses_store::ResponsesHandle,
@@ -110,7 +110,7 @@ impl MessageBox {
     pub fn oobi(&self) -> LocationScheme {
         LocationScheme::new(
             IdentifierPrefix::Basic(self.identifier.clone()),
-            keri::oobi::Scheme::Http,
+            keri_core::oobi::Scheme::Http,
             self.public_address.clone(),
         )
     }

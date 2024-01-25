@@ -1,8 +1,8 @@
-use controller::{
+use keri_controller::{
     config::ControllerConfig, identifier_controller::IdentifierController, BasicPrefix, Controller,
     CryptoBox, IdentifierPrefix, KeyManager, LocationScheme, Oobi, SelfSigningPrefix,
 };
-use keri::error::Error;
+use keri_core::error::Error;
 use std::sync::Arc;
 use tempfile::Builder;
 

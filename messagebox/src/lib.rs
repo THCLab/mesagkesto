@@ -1,5 +1,5 @@
-use controller::{error::ControllerError, IdentifierPrefix};
-use keri::{actor::prelude::SelfAddressingIdentifier, keys::KeysError};
+use keri_controller::{error::ControllerError, IdentifierPrefix};
+use keri_core::{actor::prelude::SelfAddressingIdentifier, keys::KeysError};
 use thiserror::Error;
 use url::Url;
 use validate::ExchangeArguments;
@@ -26,7 +26,7 @@ pub enum MessageboxError {
     #[error(transparent)]
     Controller(#[from] ControllerError),
     #[error(transparent)]
-    Keri(#[from] keri::error::Error),
+    Keri(#[from] keri_core::error::Error),
     #[error("Verification failed")]
     VerificationFailure,
     #[error("Kel event not in database")]

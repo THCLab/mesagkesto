@@ -1,8 +1,8 @@
 use std::path::Path;
 
-use keri::oobi::OobiManager;
-use keri::query::reply_event::{ReplyEvent, SignedReply};
-use keri::{oobi::Role, prefix::IdentifierPrefix};
+use keri_core::oobi::OobiManager;
+use keri_core::query::reply_event::{ReplyEvent, SignedReply};
+use keri_core::{oobi::Role, prefix::IdentifierPrefix};
 use tokio::sync::{mpsc, oneshot};
 
 pub enum OobiMessage {

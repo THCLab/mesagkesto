@@ -3,9 +3,9 @@ use actix_web::{
     dev::Server, http::StatusCode, web::Data, App, HttpResponse, HttpServer, ResponseError,
 };
 use anyhow::Result;
-use controller::IdentifierPrefix;
-use keri::{database::DbError, event_message::cesr_adapter::ParseError, oobi::Role};
-use keri::actor::prelude::SelfAddressingIdentifier;
+use keri_controller::IdentifierPrefix;
+use keri_core::actor::prelude::SelfAddressingIdentifier;
+use keri_core::{database::DbError, event_message::cesr_adapter::ParseError, oobi::Role};
 use std::{net::ToSocketAddrs, sync::Arc};
 
 pub struct MessageBoxListener {
@@ -57,14 +57,14 @@ mod http_handlers {
 
     use crate::{messagebox::MessageBox, MessageboxError};
     use actix_web::{http::header::ContentType, web, HttpResponse};
-    use keri::{
+    use keri_core::actor::prelude::SelfAddressingIdentifier;
+    use keri_core::{
         actor::parse_reply_stream,
         event_message::signed_event_message::{Message, Op},
         oobi::Role,
         prefix::IdentifierPrefix,
         query::reply_event::SignedReply,
     };
-    use keri::actor::prelude::SelfAddressingIdentifier;
 
     use super::ApiError;
 
@@ -194,7 +194,7 @@ mod http_handlers {
 #[derive(thiserror::Error, Debug)]
 pub enum ApiError {
     #[error(transparent)]
-    KeriError(#[from] keri::error::Error),
+    KeriError(#[from] keri_core::error::Error),
     #[error(transparent)]
     ParseError(#[from] ParseError),
     #[error(transparent)]

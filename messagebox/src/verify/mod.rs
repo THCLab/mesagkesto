@@ -5,8 +5,8 @@ mod verifier;
 
 use std::{path::Path, sync::Arc};
 
-use controller::LocationScheme;
-use keri::event_message::signature::Signature;
+use keri_controller::LocationScheme;
+use keri_core::event_message::signature::Signature;
 use tokio::sync::{
     mpsc::{self},
     oneshot,
@@ -138,7 +138,7 @@ impl VerifyHandle {
 pub mod test {
     use std::{sync::Arc, time::Duration};
 
-    use controller::{
+    use keri_controller::{
         config::ControllerConfig, identifier_controller::IdentifierController, BasicPrefix,
         Controller, KeyManager, LocationScheme, SelfSigningPrefix,
     };
@@ -153,7 +153,7 @@ pub mod test {
 
     #[actix_web::test]
     async fn test_verify_handle() -> Result<(), MessageboxError> {
-        use keri::signer::CryptoBox;
+        use keri_core::signer::CryptoBox;
         let root = Builder::new().prefix("test-db").tempdir().unwrap();
         let cont = Arc::new(
             Controller::new(ControllerConfig {

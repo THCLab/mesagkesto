@@ -2,7 +2,7 @@
 pub mod test {
     use std::{path::Path, sync::Arc, time::Duration};
 
-    use controller::{
+    use keri_controller::{
         config::ControllerConfig, identifier_controller::IdentifierController, BasicPrefix,
         Controller, CryptoBox, KeyManager, LocationScheme, SelfSigningPrefix,
     };

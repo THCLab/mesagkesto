@@ -5,17 +5,17 @@ use std::{
     time::Duration,
 };
 
-use controller::{
+use keri_controller::{
     config::ControllerConfig, error::ControllerError, identifier_controller::IdentifierController,
     BasicPrefix, Controller, EndRole, IdentifierPrefix, LocationScheme, Oobi,
 };
-use keri::{
+use keri_core::actor::prelude::{HashFunction, HashFunctionCode};
+use keri_core::{
     event_message::signature::{Nontransferable, Signature},
     oobi::Role,
     processor::event_storage::EventStorage,
     transport::TransportError,
 };
-use keri::actor::prelude::{HashFunction, HashFunctionCode};
 use tokio::{sync::Mutex, time::sleep};
 
 use crate::{validate::ValidateHandle, MessageboxError};
@@ -50,11 +50,11 @@ impl VerifyData {
             db_path: db_path.into(),
             ..Default::default()
         })?);
-        let oobi = controller::Oobi::Location(watcher_oobi.clone());
+        let oobi = Oobi::Location(watcher_oobi.clone());
         controller.resolve_oobi(oobi).await?;
 
         let id = IdentifierController::new(
-            controller::IdentifierPrefix::Basic(identifier.clone()),
+            IdentifierPrefix::Basic(identifier.clone()),
             controller.clone(),
             None,
         );
@@ -79,7 +79,7 @@ impl VerifyData {
         match s {
             Signature::Transferable(sigd, sigs) => {
                 let (kc, id, event_sai) = match sigd {
-                    keri::event_message::signature::SignerData::EventSeal(es) => {
+                    keri_core::event_message::signature::SignerData::EventSeal(es) => {
                         if let Ok(r) =
                             storage.get_keys_at_event(&es.prefix, es.sn, &es.event_digest)
                         {
@@ -88,12 +88,12 @@ impl VerifyData {
                             (None, es.prefix.clone(), Some(es.event_digest.clone()))
                         }
                     }
-                    keri::event_message::signature::SignerData::LastEstablishment(id) => (
+                    keri_core::event_message::signature::SignerData::LastEstablishment(id) => (
                         storage.get_state(id).unwrap().map(|e| e.current),
                         id.clone(),
                         None,
                     ),
-                    keri::event_message::signature::SignerData::JustSignatures => todo!(),
+                    keri_core::event_message::signature::SignerData::JustSignatures => todo!(),
                 };
                 if let Some(k) = kc {
                     Ok(k.verify(data, sigs).unwrap())
@@ -207,7 +207,7 @@ impl VerifyData {
                             .push_back(VerificationTask::Find(id.clone()));
                     }
 
-                    let digest: keri::actor::prelude::SelfAddressingIdentifier =
+                    let digest: keri_core::actor::prelude::SelfAddressingIdentifier =
                         HashFunction::from(HashFunctionCode::Blake3_256).derive(message.as_bytes());
                     Err(MessageboxError::ResponseNotReady(digest))
                 } else {

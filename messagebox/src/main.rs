@@ -2,11 +2,11 @@ use std::{net::Ipv4Addr, path::PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{arg, Parser};
-use controller::LocationScheme;
 use figment::{
     providers::{Format, Serialized, Yaml},
     Figment,
 };
+use keri_controller::LocationScheme;
 use messagebox::{
     messagebox::MessageBox, messagebox_listener::MessageBoxListener, MessageboxError,
 };

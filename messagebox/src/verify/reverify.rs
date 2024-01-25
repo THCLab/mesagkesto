@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use controller::IdentifierPrefix;
-use keri::event_message::signature::Signature;
+use keri_controller::IdentifierPrefix;
+use keri_core::event_message::signature::Signature;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::MessageboxError;

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use keri::actor::prelude::SelfAddressingIdentifier;
+use keri_core::actor::prelude::SelfAddressingIdentifier;
 use tokio::sync::{mpsc, oneshot};
 
 pub enum ResponsesMessage {
