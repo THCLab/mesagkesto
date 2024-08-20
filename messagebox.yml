@@ -1,7 +1,14 @@
+# Path to the DB file where (KEL)
 db_path: "./db/"
+# Path to
 oobi_path: "./oobi/"
+# Port on which Mesaĝkesto service wiil be listinging
 http_port: 8080
+# Host of the Mesaĝkesto service
 public_url: "http://localhost:3235/"
+# Seed from which private key (eid) will be generated
 seed: "AMRXyU3ErhBNdRSDX1zKlrbZGRp1GfCmkRIa58gF07I8"
+# Firebase server key for communication on mobil?
 server_key: "AAAAky1v068:APA91bHHpGtP6M5h3ICFc9AzY35MrkTmjwblkLlEJ1C0yvkrUu7KDkmkXMzPq2q-0o1l49fKxOeDQaKIkZTTEAIX3Jd45j6KNtSempYqop4Psitvz2Ng7iBz-IeS1SGEs1GpnWseJlpP"
+# Watcher oobi which would be used to
 watcher_oobi: '{"eid":"BF2t2NPc1bwptY1hYV0YCib1JjQ11k9jtuaZemecPF5b","scheme":"http","url":"http://localhost:3235/"}'

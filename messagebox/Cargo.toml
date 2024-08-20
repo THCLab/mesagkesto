@@ -2,6 +2,9 @@
 name = "messagebox"
 version = "0.1.2-beta.1"
 edition = "2021"
+license = "EUPL-1.2"
+description = "Service to connect people and machines"
+publish=false
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -23,3 +26,10 @@ keri-controller = { version = "0.1.1" }
 
 [dev-dependencies]
 tempfile = "3.8.1"
+
+[package.metadata.release]
+publish=false
+tag=true
+tag-name="v{{version}}"
+pre-release-hook = ["git", "cliff", "--tag", "{{version}}", "-r", "../", "--output", "../CHANGELOG.md" ]
+pre-release-commit-message="chore: release {{version}} version"

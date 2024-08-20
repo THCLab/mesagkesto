@@ -2,6 +2,9 @@
 name = "bindings"
 version = "0.1.2-beta.1"
 edition = "2021"
+description = "Mesaĝkesto bindings for Dart"
+license = "EUPL-1.2"
+publish = false
 
 [lib]
 name = "dartmesagkesto"

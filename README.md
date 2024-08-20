@@ -3,6 +3,13 @@
 Connecting people and machines
 
 
+
+# Instruction
+
+eid - endpoint identifier, id of entitty who controls the endpoint
+cid - controling identifier, id of entitty whow choose eid to play a role (e.g. witness role)
+
+
 ## License
 
 EUPL 1.2

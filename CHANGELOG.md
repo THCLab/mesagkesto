@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [unreleased]
+
+### ⚙️ Miscellaneous Tasks
+
+- Trigger action only on tags
+
+## [0.1.2-beta.1] - 2024-08-20
+
+### ⚙️ Miscellaneous Tasks
+
+- Release 0.1.2-beta.1 version
+
 ## [0.1.1] - 2024-08-20
 
 ### 🐛 Bug Fixes

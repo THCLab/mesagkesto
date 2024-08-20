@@ -1,0 +1,7 @@
+db_path: "./db/"
+oobi_path: "./oobi/"
+http_port: 8080
+public_url: "http://localhost:3235/"
+seed: <seed>
+server_key: <firebase_server_key>
+watcher_oobi: <watcher_oobi>
