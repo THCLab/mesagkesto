@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-actix-web = "4.3.1"
+actix-web = "4.8.0"
 serde_json = "1.0.96"
 keri-core = { version = "0.9.0", features = ["oobi", "query", "mailbox"]}
 url = "2.4.0"
