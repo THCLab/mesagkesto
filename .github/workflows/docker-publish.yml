@@ -2,11 +2,8 @@ name: Docker
 
 on:
   push:
-    branches: [ "cefa" ]
     # Publish semver tags as releases.
     tags: [ 'v*.*.*' ]
-  pull_request:
-    branches: [ "cefa" ]
 
 env:
   # Use docker.io for Docker Hub if empty
