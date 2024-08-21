@@ -43,6 +43,16 @@ jobs:
         if: matrix.platform == 'linux'
         run: cargo build --release --target-dir target/linux-target
 
+      - name: Verify NDK Installation
+        if: matrix.platform == 'android'
+        run: |
+          ls -l $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang
+          ls -l $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi21-clang
+          ls -l $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/i686-linux-android21-clang
+          ls -l $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android21-clang
+
+
+
       - name: Build Rust library for Android
         if: matrix.platform == 'android'
         env:
@@ -56,15 +66,6 @@ jobs:
           cargo build --release --target armv7-linux-androideabi
           cargo build --release --target i686-linux-android
           cargo build --release --target x86_64-linux-android
-
-      - name: Verify NDK Installation
-        if: matrix.platform == 'android'
-        run: |
-          ls -l $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang
-          ls -l $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi21-clang
-          ls -l $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/i686-linux-android21-clang
-          ls -l $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android21-clang
-
 
       - name: Package Rust library for Dart
         run: |
