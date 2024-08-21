@@ -1,7 +1,7 @@
 name: mesagkesto
 description: Connecting people and machines - bindings for messagebox for Android.
 version: 0.1.0
-homepage: https://github.com/argonAUTHs/mesagkesto
+homepage: https://github.com/THCLab/mesagkesto
 
 environment:
   sdk: '>=3.0.6 <4.0.0'
@@ -40,7 +40,7 @@ flutter:
   plugin:
     platforms:
       android:
-        package: com.argonauths.mesagkesto
+        package: com.thclab.mesagkesto
         pluginClass: MesagkestoPlugin
 
   # To add assets to your plugin package, add an assets section, like this:
