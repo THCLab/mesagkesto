@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     path::Path,
     sync::Arc,
     time::Duration,
@@ -16,7 +16,13 @@ use keri_core::{
     processor::event_storage::EventStorage,
     transport::TransportError,
 };
-use tokio::{sync::Mutex, time::sleep};
+use tokio::{
+    sync::{
+        mpsc::{self, Receiver, Sender},
+        Mutex,
+    },
+    time::sleep,
+};
 
 use crate::{validate::ValidateHandle, MessageboxError};
 
@@ -29,7 +35,8 @@ pub(crate) struct VerifyData {
     signer: SignerHandle,
     witnesses: Arc<Mutex<HashMap<IdentifierPrefix, Vec<BasicPrefix>>>>,
     reverify: ReverifyHandle,
-    task_queue: Arc<Mutex<VecDeque<VerificationTask>>>,
+    task_sender: Sender<VerificationTask>,
+    task_queue: Mutex<Receiver<VerificationTask>>,
     validate_handle: ValidateHandle,
 }
 
@@ -61,12 +68,14 @@ impl VerifyData {
         let end_role = id.add_watcher(watcher_oobi.eid)?;
         let signature = signer.sign(end_role.clone()).await?;
         id.finalize_event(end_role.as_bytes(), signature).await?;
+        let (task_sender, task_receiver) = mpsc::channel(20);
         Ok(VerifyData {
             signer: signer.clone(),
             controller: id,
             witnesses: Arc::new(Mutex::new(HashMap::new())),
             reverify: ReverifyHandle::new(),
-            task_queue: Arc::new(Mutex::new(VecDeque::new())),
+            task_queue: Mutex::new(task_receiver),
+            task_sender,
             validate_handle,
         })
     }
@@ -161,10 +170,9 @@ impl VerifyData {
             query_result = self.controller.finalize_query(query).await;
             println!("\nin ask watcher: {:?}", query_result);
             if query_result.is_ok() {
-                self.task_queue
-                    .lock()
-                    .await
-                    .push_back(VerificationTask::Reverify(id.clone()));
+                let _ = self.task_sender
+                    .send(VerificationTask::Reverify(id.clone()))
+                    .await;
             }
         }
     }
@@ -201,10 +209,9 @@ impl VerifyData {
                         .unwrap();
                     // Ask watcher
                     {
-                        self.task_queue
-                            .lock()
-                            .await
-                            .push_back(VerificationTask::Find(id.clone()));
+                        let _ = self.task_sender
+                            .send(VerificationTask::Find(id.clone()))
+                            .await;
                     }
 
                     let digest: keri_core::actor::prelude::SelfAddressingIdentifier =
@@ -261,11 +268,11 @@ impl VerifyData {
                 message,
                 signatures,
                 sender,
-            } => self
-                .task_queue
-                .lock()
-                .await
-                .push_back(VerificationTask::Verify(message, signatures, sender)),
+            } => {
+                let _ = self.task_sender
+                    .send(VerificationTask::Verify(message, signatures, sender))
+                    .await;
+            }
             VerifyMessage::Oobi { message, sender } => {
                 let _ = sender.send(self.handle_oobi(&message).await);
             }
@@ -274,8 +281,8 @@ impl VerifyData {
 
     pub async fn handle_task(&self) {
         loop {
-            let task = { self.task_queue.lock().await.pop_front() };
-            if let Some(task) = task {
+            let mut queue = self.task_queue.lock().await;
+            if let Some(task) = queue.recv().await {
                 match task {
                     VerificationTask::Verify(message, signature, sender) => {
                         println!("\nHandle verify task");
