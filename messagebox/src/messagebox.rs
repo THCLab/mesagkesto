@@ -53,7 +53,7 @@ impl MessageBox {
             ReplyRoute::LocScheme(loc_scheme),
             HashFunctionCode::Blake3_256,
             SerializationFormats::JSON,
-        )?;
+        );
         let signed_reply = SignedReply::new_nontrans(
             reply.clone(),
             id.clone(),

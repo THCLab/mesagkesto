@@ -139,8 +139,9 @@ pub mod test {
     use std::{sync::Arc, time::Duration};
 
     use keri_controller::{
-        config::ControllerConfig, identifier_controller::IdentifierController, BasicPrefix,
-        Controller, KeyManager, LocationScheme, SelfSigningPrefix,
+        controller::Controller,
+        config::ControllerConfig, BasicPrefix, KeyManager,
+        LocationScheme, SelfSigningPrefix,
     };
     use serde_json::json;
     use tempfile::Builder;
@@ -153,6 +154,10 @@ pub mod test {
 
     #[actix_web::test]
     async fn test_verify_handle() -> Result<(), MessageboxError> {
+
+        if std::env::var("RUN_NETWORK_TESTS").is_err() {
+            return Ok(());
+        }
         use keri_core::signer::CryptoBox;
         let root = Builder::new().prefix("test-db").tempdir().unwrap();
         let cont = Arc::new(
@@ -171,7 +176,7 @@ pub mod test {
             .unwrap();
 
         // Incept signer identifier and publish kel to witness.
-        let signing_identifier = {
+        let mut signing_identifier = {
             let pk = BasicPrefix::Ed25519(km1.public_key());
             let npk = BasicPrefix::Ed25519(km1.next_public_key());
 
@@ -182,18 +187,16 @@ pub mod test {
             let signature =
                 SelfSigningPrefix::Ed25519Sha512(km1.sign(icp_event.as_bytes()).unwrap());
 
-            let incepted_identifier = cont
-                .finalize_inception(icp_event.as_bytes(), &signature)
-                .await
-                .unwrap();
-            IdentifierController::new(incepted_identifier, cont.clone(), None)
+            cont
+                .finalize_incept(icp_event.as_bytes(), &signature)
+                .unwrap()
         };
 
         signing_identifier.notify_witnesses().await.unwrap();
 
         // Quering mailbox to get receipts
         let query = signing_identifier
-            .query_mailbox(&signing_identifier.id, &[witness_id.clone()])
+            .query_mailbox(signing_identifier.id(), &[witness_id.clone()])
             .unwrap();
 
         // Query with wrong signature
@@ -201,19 +204,19 @@ pub mod test {
             let qry = query[0].clone();
             let sig = SelfSigningPrefix::Ed25519Sha512(km1.sign(&qry.encode().unwrap()).unwrap());
             signing_identifier
-                .finalize_query(vec![(qry, sig)])
+                .finalize_query_mailbox(vec![(qry, sig)])
                 .await
                 .unwrap();
         }
 
-        let rrr = signing_identifier.source.get_state(&signing_identifier.id);
+        let rrr = signing_identifier.find_state(signing_identifier.id());
         assert!(rrr.is_ok());
 
-        let oobi_str = json!({"cid": &signing_identifier.id ,"role":"witness","eid":"BJq7UABlttINuWJh1Xl2lkqZG4NTdUdqnbFJDa6ZyxCC"}).to_string();
+        let oobi_str = json!({"cid": signing_identifier.id() ,"role":"witness","eid":"BJq7UABlttINuWJh1Xl2lkqZG4NTdUdqnbFJDa6ZyxCC"}).to_string();
 
         let msg = r#"{"m":"hi there"}"#;
         let signature = SelfSigningPrefix::Ed25519Sha512(km1.sign(msg.as_bytes()).unwrap());
-        let signature = signing_identifier.sign(signature, 0).unwrap();
+        let signature = signing_identifier.sign_with_index(signature, 0).unwrap();
 
         let notify_handle =
             NotifyHandle::new("AAAAky1v068:APA91bHHpGtP6M5h3ICFc9AzY35MrkTmjwblkLlEJ1C0yvkrUu7KDkmkXMzPq2q-0o1l49fKxOeDQaKIkZTTEAIX3Jd45j6KNtSempYqop4Psitvz2Ng7iBz-IeS1SGEs1GpnWseJlpP".to_string());
@@ -249,12 +252,12 @@ pub mod test {
         let npk = BasicPrefix::Ed25519(km1.next_public_key());
 
         let rot_event = signing_identifier
-            .rotate(vec![pk], vec![npk], vec![], vec![], 1)
+            .rotate(vec![pk], vec![npk], 1, vec![], vec![], 1)
             .await
             .unwrap();
         let signature = SelfSigningPrefix::Ed25519Sha512(km1.sign(rot_event.as_bytes()).unwrap());
         signing_identifier
-            .finalize_event(rot_event.as_bytes(), signature)
+            .finalize_rotate(rot_event.as_bytes(), signature)
             .await
             .unwrap();
 
@@ -262,7 +265,7 @@ pub mod test {
 
         // Querying mailbox to get receipts
         let query = signing_identifier
-            .query_mailbox(&signing_identifier.id, &[witness_id.clone()])
+            .query_mailbox(signing_identifier.id(), &[witness_id.clone()])
             .unwrap();
 
         // Query with wrong signature
@@ -270,18 +273,18 @@ pub mod test {
             let qry = query[0].clone();
             let sig = SelfSigningPrefix::Ed25519Sha512(km1.sign(&qry.encode().unwrap()).unwrap());
             signing_identifier
-                .finalize_query(vec![(qry, sig)])
+                .finalize_query_mailbox(vec![(qry, sig)])
                 .await
                 .unwrap();
         }
 
-        // let oobi_str = json!({"cid": &signing_identifier.id ,"role":"witness","eid":"BJq7UABlttINuWJh1Xl2lkqZG4NTdUdqnbFJDa6ZyxCC"}).to_string();
+        // let oobi_str = json!({"cid": signing_identifier.id() ,"role":"witness","eid":"BJq7UABlttINuWJh1Xl2lkqZG4NTdUdqnbFJDa6ZyxCC"}).to_string();
 
         let msg = r#"{"m":"hi there2"}"#;
-        let exn = forward_message(signing_identifier.id.to_string(), msg.to_string());
+        let exn = forward_message(signing_identifier.id().to_string(), msg.to_string());
         let signature =
             SelfSigningPrefix::Ed25519Sha512(km1.sign(exn.to_string().as_bytes()).unwrap());
-        let signature = signing_identifier.sign(signature, 0).unwrap();
+        let signature = signing_identifier.sign_with_index(signature, 0).unwrap();
         // vh.resolve_oobi(oobi_str).await.unwrap();
         let r = vh.verify(&exn.to_string(), vec![signature.clone()]).await;
         dbg!(&r);

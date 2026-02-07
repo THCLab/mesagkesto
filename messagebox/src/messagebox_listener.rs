@@ -5,7 +5,7 @@ use actix_web::{
 use anyhow::Result;
 use keri_controller::IdentifierPrefix;
 use keri_core::actor::prelude::SelfAddressingIdentifier;
-use keri_core::{database::DbError, event_message::cesr_adapter::ParseError, oobi::Role};
+use keri_core::{event_message::cesr_adapter::ParseError, oobi::Role};
 use std::{net::ToSocketAddrs, sync::Arc};
 
 pub struct MessageBoxListener {
@@ -197,8 +197,6 @@ pub enum ApiError {
     KeriError(#[from] keri_core::error::Error),
     #[error(transparent)]
     ParseError(#[from] ParseError),
-    #[error(transparent)]
-    KeriDbError(#[from] DbError),
     #[error(transparent)]
     MessageboxError(#[from] MessageboxError),
     #[error("Can't be parsed")]

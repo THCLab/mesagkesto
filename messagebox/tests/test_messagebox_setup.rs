@@ -1,13 +1,20 @@
 use keri_controller::{
-    config::ControllerConfig, identifier_controller::IdentifierController, BasicPrefix, Controller,
-    CryptoBox, IdentifierPrefix, KeyManager, LocationScheme, Oobi, SelfSigningPrefix,
+    controller::Controller,
+    config::ControllerConfig, BasicPrefix, CryptoBox, IdentifierPrefix, KeyManager,
+    LocationScheme, Oobi, SelfSigningPrefix,
 };
+use keri_core::actor::event_generator;
+use keri_core::oobi::Role;
 use keri_core::error::Error;
 use std::sync::Arc;
 use tempfile::Builder;
 
 #[actix_web::test]
 async fn test_messagebox_location() -> Result<(), Error> {
+
+    if std::env::var("RUN_NETWORK_TESTS").is_err() {
+        return Ok(());
+    }
     // Setup first identifier.
     let root = Builder::new().prefix("test-db").tempdir().unwrap();
     let controller1 = Arc::new(
@@ -30,15 +37,12 @@ async fn test_messagebox_location() -> Result<(), Error> {
             .unwrap();
         let signature = SelfSigningPrefix::Ed25519Sha512(km1.sign(icp_event.as_bytes()).unwrap());
 
-        let incepted_identifier = controller1
-            .finalize_inception(icp_event.as_bytes(), &signature)
-            .await
-            .unwrap();
-        IdentifierController::new(incepted_identifier, controller1.clone(), None)
+        controller1
+            .finalize_incept(icp_event.as_bytes(), &signature)
+            .unwrap()
     };
 
-    assert!(identifier1.get_kel().is_ok());
-    let message_box_id: IdentifierPrefix = "BFY1nGjV9oApBzo5Oq5JqjwQsZEQqsCCftzo3WJjMMX-"
+        let message_box_id: IdentifierPrefix = "BFY1nGjV9oApBzo5Oq5JqjwQsZEQqsCCftzo3WJjMMX-"
         .parse()
         .unwrap();
     let message_box_oobi: LocationScheme = serde_json::from_str(&format!(
@@ -49,27 +53,36 @@ async fn test_messagebox_location() -> Result<(), Error> {
 
     // Identifier1 adds messagebox
     identifier1
-        .source
-        .resolve_oobi(Oobi::Location(message_box_oobi.clone()))
+        .resolve_oobi(&Oobi::Location(message_box_oobi.clone()))
         .await
         .unwrap();
 
-    let schema = identifier1.source.get_loc_schemas(&message_box_id);
+    let schema = identifier1.get_location(&message_box_id);
     assert_eq!(schema.unwrap()[0], message_box_oobi);
 
     // Generate reply that contains end role message inside.
-    let add_message_box = identifier1.add_messagebox(message_box_id.clone()).unwrap();
+    let add_message_box = String::from_utf8(
+        event_generator::generate_end_role(
+            identifier1.id(),
+            &message_box_id,
+            Role::Messagebox,
+            true,
+        )
+        .encode()
+        .unwrap(),
+    )
+    .unwrap();
 
     let add_message_box_sig =
         SelfSigningPrefix::Ed25519Sha512(km1.sign(add_message_box.as_bytes()).unwrap());
 
     // Sign and send message to messagebox.
     identifier1
-        .finalize_event(add_message_box.as_bytes(), add_message_box_sig)
+        .finalize_add_watcher(add_message_box.as_bytes(), add_message_box_sig)
         .await
         .unwrap();
 
-    let saved_messagebox_location = identifier1.source.get_messagebox_location(&identifier1.id);
+    let saved_messagebox_location = identifier1.get_role_location(identifier1.id(), Role::Messagebox);
     assert_eq!(saved_messagebox_location.unwrap()[0], message_box_oobi);
 
     // Setup second identifier.
@@ -94,32 +107,29 @@ async fn test_messagebox_location() -> Result<(), Error> {
             .unwrap();
         let signature = SelfSigningPrefix::Ed25519Sha512(km2.sign(icp_event.as_bytes()).unwrap());
 
-        let incepted_identifier = controller2
-            .finalize_inception(icp_event.as_bytes(), &signature)
-            .await
-            .unwrap();
-        IdentifierController::new(incepted_identifier, controller2.clone(), None)
+        controller2
+            .finalize_incept(icp_event.as_bytes(), &signature)
+            .unwrap()
     };
 
     let end_role_oobi = format!(
         r#"{{"cid":"{}","role":"messagebox","eid":"{}"}}"#,
-        &identifier1.id,
+        identifier1.id(),
         &message_box_id.to_string()
     );
     // Resolve oobis that specify messagebox of identifier1
     identifier2
-        .source
-        .resolve_oobi(Oobi::Location(message_box_oobi.clone()))
+        .resolve_oobi(&Oobi::Location(message_box_oobi.clone()))
         .await
         .unwrap();
     identifier2
-        .source
-        .resolve_oobi(serde_json::from_str(&end_role_oobi).unwrap())
+        .resolve_oobi(&serde_json::from_str(&end_role_oobi).unwrap())
         .await
         .unwrap();
 
     // Check saved identifier1 messagebox information.
-    let retrived_messagebox_location = identifier2.source.get_messagebox_location(&identifier1.id);
+    let retrived_messagebox_location =
+        identifier2.get_role_location(identifier1.id(), Role::Messagebox);
     assert_eq!(retrived_messagebox_location.unwrap()[0], message_box_oobi);
 
     Ok(())

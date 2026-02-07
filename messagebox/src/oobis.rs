@@ -1,6 +1,7 @@
 use std::path::Path;
 
-use keri_core::oobi::OobiManager;
+use keri_core::oobi_manager::OobiManager;
+use keri_core::database::redb::RedbDatabase;
 use keri_core::query::reply_event::{ReplyEvent, SignedReply};
 use keri_core::{oobi::Role, prefix::IdentifierPrefix};
 use tokio::sync::{mpsc, oneshot};
@@ -35,7 +36,11 @@ impl OobiActor {
     fn new(receiver: mpsc::Receiver<OobiMessage>, oobi_db_path: &Path) -> Self {
         OobiActor {
             receiver,
-            oobi_manager: OobiManager::new(oobi_db_path),
+            oobi_manager: OobiManager::new(
+                std::sync::Arc::new(
+                    RedbDatabase::new(&oobi_db_path.join("oobi_db")).unwrap(),
+                ),
+            ),
         }
     }
     fn handle_message(&mut self, msg: OobiMessage) {
@@ -47,7 +52,6 @@ impl OobiActor {
                 let loc_scheme = self
                     .oobi_manager
                     .get_loc_scheme(&endpoint_identifier)
-                    .unwrap()
                     .unwrap_or_default();
                 let _ = sender.send(loc_scheme);
             }
@@ -60,7 +64,8 @@ impl OobiActor {
                 let end_role = self
                     .oobi_manager
                     .get_end_role(&controller_identifier, role)
-                    .unwrap();
+                    .unwrap()
+                    .unwrap_or_default();
                 let _ = sender.send(end_role);
             }
             OobiMessage::RegisterOobi { oobis, sender } => {

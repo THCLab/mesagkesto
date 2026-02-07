@@ -8,6 +8,10 @@ use url::Url;
 
 #[actix_web::test]
 async fn test_validation() -> Result<(), Error> {
+
+    if std::env::var("RUN_NETWORK_TESTS").is_err() {
+        return Ok(());
+    }
     let reg = register_token("Identifier".to_string(), "cEm86d15R7iiArf4J1VMi2:APA91bFozuXaqh6NxqhusEF-7B9RAeVfNbmwHWC4DjwwWMZEzRPcq2ctPQZobKRxSkQtjWp5O0VqktRLAubaNer6rsuzLPz-YaKDQJQlVz1Fp3OHL6UlMutElWzbykdNwI0fENxdFkb6".to_string());
     let exchange = forward_message("Identifier".to_string(), "saved0".to_string());
     let exchange1 = forward_message("Identifier".to_string(), "saved1".to_string());
