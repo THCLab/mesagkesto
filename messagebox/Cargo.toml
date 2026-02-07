@@ -11,7 +11,7 @@ publish=false
 [dependencies]
 actix-web = "4.8.0"
 serde_json = "1.0.96"
-keri-core = { version = "0.9.0", features = ["oobi", "query", "mailbox"]}
+keri-core = { version = "0.17.10", features = ["oobi", "query", "mailbox"]}
 url = "2.4.0"
 thiserror = "1.0.43"
 figment = { version = "0.10.6", features = ["yaml", "env"] }
@@ -20,9 +20,9 @@ clap = { version = "4.1.1", features = ["derive"] }
 anyhow = { version = "1.0.56" }
 tokio = {version = "1.29.1", features = ["sync", "rt", "macros", "rt-multi-thread", "time"]}
 ureq = {version = "2.6.2", features = ["json"]}
-said = {version = "0.4.0"}
-cesrox = { version = "0.1.4", features = ["cesr-proof"]}
-keri-controller = { version = "0.1.1" }
+said = {version = "0.4.3"}
+cesrox = { version = "0.1.8", features = ["cesr-proof"]}
+keri-controller = { version = "0.17.10" }
 
 [dev-dependencies]
 tempfile = "3.8.1"
