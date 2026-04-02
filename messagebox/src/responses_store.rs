@@ -33,22 +33,24 @@ impl ResponsesActor {
                 sender,
             } => {
                 let digest_str = digest.to_string();
+                debug!(digest = %digest_str, "Saving response");
                 match self.db.save_response(&digest_str, &message) {
                     Ok(()) => {
                         let _ = sender.send(1);
                     }
                     Err(e) => {
-                        eprintln!("Failed to save response: {}", e);
+                        warn!(digest = %digest_str, error = %e, "Failed to save response");
                         let _ = sender.send(0);
                     }
                 }
             }
             ResponsesMessage::GetByDigest { digest, sender } => {
                 let digest_str = digest.to_string();
+                debug!(digest = %digest_str, "Getting response");
                 let res = match self.db.get_response(&digest_str) {
                     Ok(val) => val,
                     Err(e) => {
-                        eprintln!("Failed to get response: {}", e);
+                        warn!(digest = %digest_str, error = %e, "Failed to get response");
                         None
                     }
                 };

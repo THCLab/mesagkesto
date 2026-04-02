@@ -166,7 +166,7 @@ impl MessageBox {
         self.response_handle.get_by_digest(sai).await
     }
 
-    fn split_cesr_stream(
+    pub fn split_cesr_stream(
         input: &[u8],
     ) -> Result<(Vec<u8>, impl Iterator<Item = Signature>), MessageboxError> {
         let (_rest, parsed_data) =

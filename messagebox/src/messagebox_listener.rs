@@ -243,8 +243,16 @@ mod http_handlers {
         Ok(HttpResponse::Ok().json(challenge))
     }
 
+    /// Payload fields expected inside the CESR-signed JSON envelope.
+    #[derive(serde::Deserialize)]
+    struct AuthResponsePayload {
+        nonce: String,
+        entity_aid: String,
+        entity_oobi: String,
+    }
+
     pub async fn auth_respond(
-        body: web::Json<dauthz_core::ChallengeResponse>,
+        body: String,
         data: web::Data<Arc<MessageBox>>,
     ) -> Result<HttpResponse, ApiError> {
         let auth = data
@@ -252,22 +260,48 @@ mod http_handlers {
             .as_ref()
             .ok_or(ApiError::AuthNotConfigured)?;
 
-        let response = body.into_inner();
+        // Parse CESR stream: extract JSON payload + cryptographic signatures
+        let (payload_bytes, signatures) = MessageBox::split_cesr_stream(body.as_bytes())?;
+        let payload_str = String::from_utf8(payload_bytes)
+            .map_err(|e| ApiError::MessageboxError(
+                crate::MessageboxError::Unparsable(e.to_string()),
+            ))?;
 
-        // Verify the signed challenge using existing KERI verification
-        let verified = match data
+        // Deserialize the auth response fields from the signed payload
+        let payload: AuthResponsePayload = serde_json::from_str(&payload_str)
+            .map_err(|e| ApiError::MessageboxError(
+                crate::MessageboxError::Unparsable(e.to_string()),
+            ))?;
+
+        debug!(
+            entity_aid = %payload.entity_aid,
+            entity_oobi = %payload.entity_oobi,
+            nonce = %payload.nonce,
+            "POST /auth/respond parsed payload, resolving OOBI"
+        );
+
+        // Resolve the entity's OOBI so we can verify their signature
+        data.resolve_oobi(payload.entity_oobi.clone()).await?;
+
+        // Verify the CESR signature against the sender's KEL
+        let verified = data
             .verify_handle
-            .verify(&response.signed_challenge, vec![])
+            .verify(&payload_str, signatures.collect())
             .await
-        {
-            Ok(()) => true,
-            Err(_) => {
-                // For DauthZ, signature verification may use a different path.
-                // Accept the signed_challenge field as-is and let DauthZ decide.
-                // In a full implementation, we'd verify the CESR signature here.
-                // For now, we pass it through as the DauthZ service validates expiry/nonce.
-                false
-            }
+            .is_ok();
+
+        debug!(
+            entity_aid = %payload.entity_aid,
+            verified = verified,
+            "POST /auth/respond signature verification complete"
+        );
+
+        // Construct the ChallengeResponse for DauthZ from the verified payload
+        let response = dauthz_core::ChallengeResponse {
+            entity_aid: payload.entity_aid,
+            entity_oobi: payload.entity_oobi,
+            nonce: payload.nonce,
+            signed_challenge: payload_str,
         };
 
         match auth.handle_response(response, verified).await? {
