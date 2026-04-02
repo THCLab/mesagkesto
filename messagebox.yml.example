@@ -1,8 +1,33 @@
+# Mesaĝkesto configuration
+# Copy this file to messagebox.yml and adjust the values.
+
+# Directory for KEL and message database storage (redb).
 db_path: "./db/"
+
+# Directory for OOBI storage.
 oobi_path: "./oobi/"
+
+# HTTP listen port.
 http_port: 8080
-public_url: "http://localhost:3235/"
-seed: <seed>
-server_key: <firebase_server_key>
-watcher_oobi: <watcher_oobi>
+
+# Public URL used to advertise this messagebox via OOBI.
+# Must be reachable by other KERI actors.
+public_url: "http://localhost:8080/"
+
+# Ed25519 keypair seed (CESR-encoded, e.g. "AK8F6AAiYDpNlW...").
+# If omitted, a random key is generated on each start.
+# seed: "AK8F6AAiYDpNlW..."
+
+# Firebase Cloud Messaging server key for push notifications.
+# Required — the server will not start without it.
+server_key: "<your-firebase-server-key>"
+
+# Watcher OOBI as JSON. The messagebox uses the watcher to
+# fetch KEL updates for signature verification.
+watcher_oobi: '{"eid":"BBilc4-L3tFUnfM_wJr4S4OJanAv_VmF_dJNN6vkf2Ha","scheme":"http","url":"http://watcher.example.com/"}'
+
+# DauthZ state directory. When set, enables the authentication
+# endpoints (/auth/challenge, /auth/respond, /auth/session)
+# and authenticated mailbox/ACL/WebSocket endpoints.
+# Comment out to run in unauthenticated relay-only mode.
 dauthz_state_dir: "./dauthz/"

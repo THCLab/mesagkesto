@@ -31,26 +31,49 @@ Copy the example config and edit:
 cp messagebox.yml.example messagebox.yml
 ```
 
-Configuration values (`messagebox.yml`):
+See [`messagebox.yml.example`](messagebox.yml.example) for a fully commented template.
 
-| Key | Description |
-|-----|-------------|
-| `db_path` | Directory for KEL and message database storage |
-| `oobi_path` | Directory for OOBI storage |
-| `http_port` | HTTP listen port |
-| `public_url` | Public URL for OOBI advertisement |
-| `seed` | Ed25519 keypair seed (optional, auto-generated if omitted) |
-| `server_key` | Firebase FCM server key |
-| `watcher_oobi` | Watcher OOBI JSON for KEL updates |
-| `dauthz_state_dir` | Directory for DauthZ state (enables authentication, optional) |
+| Key | Description | Required |
+|-----|-------------|----------|
+| `db_path` | Directory for KEL and message database storage (redb) | Yes |
+| `oobi_path` | Directory for OOBI storage | Yes |
+| `http_port` | HTTP listen port | Yes |
+| `public_url` | Public URL for OOBI advertisement (must be reachable by peers) | Yes |
+| `watcher_oobi` | Watcher OOBI JSON string for KEL updates | Yes |
+| `server_key` | Firebase Cloud Messaging server key for push notifications | Yes |
+| `seed` | Ed25519 keypair seed (CESR-encoded). Auto-generated if omitted | No |
+| `dauthz_state_dir` | Directory for DauthZ state. Enables auth, mailbox, ACL, and WebSocket endpoints | No |
 
-CLI arguments override YAML config values.
+**Modes of operation:**
+- **With `dauthz_state_dir`** — Full messaging service: authentication, mailboxes, ACL, WebSocket, and KERI relay.
+- **Without `dauthz_state_dir`** — KERI relay only: message processing, OOBI resolution, no auth or mailbox endpoints.
+
+CLI arguments (`-d`, `-u`, `-p`, `-s`, `-k`) override YAML config values.
 
 ### Build & Run
 
 ```bash
 cargo build --release
 ./target/release/messagebox -c messagebox.yml
+```
+
+### Logging
+
+Logging uses the `RUST_LOG` environment variable (via `tracing`). Default level is `info`.
+
+```bash
+# Default (info-level)
+./target/release/messagebox -c messagebox.yml
+
+# Debug — logs every HTTP request/response, WebSocket frame, CESR parsing,
+# signature verification, storage operations, and actor messages
+RUST_LOG=debug ./target/release/messagebox -c messagebox.yml
+
+# Debug only for messagebox, info for dependencies
+RUST_LOG=messagebox=debug ./target/release/messagebox -c messagebox.yml
+
+# Trace — maximum verbosity (includes actix internals)
+RUST_LOG=trace ./target/release/messagebox -c messagebox.yml
 ```
 
 ### Docker
