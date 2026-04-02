@@ -1,6 +1,6 @@
 use anyhow::Error;
 use messagebox::{
-    forward_message, messagebox::MessageBox, query_by_digest, query_by_sn, register_token,
+    db::Db, forward_message, messagebox::MessageBox, query_by_digest, query_by_sn, register_token,
 };
 use said::derivation::{HashFunction, HashFunctionCode};
 use tempfile::Builder;
@@ -28,16 +28,20 @@ async fn test_validation() -> Result<(), Error> {
     // Setup first identifier.
     let root = Builder::new().prefix("test-db").tempdir().unwrap();
     let root2 = Builder::new().prefix("test-db").tempdir().unwrap();
+    let db_dir = Builder::new().prefix("test-msgdb").tempdir().unwrap();
+    let db = Db::open(db_dir.path()).expect("Failed to open test db");
     let server_key = "AAAAky1v068:APA91bHHpGtP6M5h3ICFc9AzY35MrkTmjwblkLlEJ1C0yvkrUu7KDkmkXMzPq2q-0o1l49fKxOeDQaKIkZTTEAIX3Jd45j6KNtSempYqop4Psitvz2Ng7iBz-IeS1SGEs1GpnWseJlpP".to_string();
     let watcher_oobi = serde_json::from_str(r#"{"eid":"BF2t2NPc1bwptY1hYV0YCib1JjQ11k9jtuaZemecPF5b","scheme":"http","url":"http://localhost:3236/"}"#).unwrap();
 
     let messagebox = MessageBox::setup(
+        db,
         root.path(),
         root2.path(),
         watcher_oobi,
         Url::parse("http:/blabla.com").unwrap(),
         None,
         Some(server_key),
+        None,
     )
     .await
     .unwrap();

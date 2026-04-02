@@ -5,3 +5,4 @@ public_url: "http://localhost:3235/"
 seed: <seed>
 server_key: <firebase_server_key>
 watcher_oobi: <watcher_oobi>
+dauthz_state_dir: "./dauthz/"

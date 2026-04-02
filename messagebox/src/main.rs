@@ -8,7 +8,7 @@ use figment::{
 };
 use keri_controller::LocationScheme;
 use messagebox::{
-    messagebox::MessageBox, messagebox_listener::MessageBoxListener, MessageboxError,
+    db::Db, messagebox::MessageBox, messagebox_listener::MessageBoxListener, MessageboxError,
 };
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -32,6 +32,9 @@ pub struct Config {
 
     /// Firebase server key
     server_key: Option<String>,
+
+    /// DauthZ state directory (enables authentication)
+    dauthz_state_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Parser, Serialize)]
@@ -76,13 +79,17 @@ async fn main() -> Result<()> {
     let watcher_oobi: LocationScheme =
         serde_json::from_str(&cfg.watcher_oobi).map_err(|_e| MessageboxError::OobiParsingError)?;
 
+    let db = Db::open(&cfg.db_path).expect("Failed to open database");
+
     let data = MessageBox::setup(
+        db,
         &cfg.db_path,
         &cfg.oobi_path,
         watcher_oobi,
         cfg.public_url,
         cfg.seed,
         cfg.server_key,
+        cfg.dauthz_state_dir.as_deref(),
     )
     .await?;
     let messagebox_oobi = data.oobi();

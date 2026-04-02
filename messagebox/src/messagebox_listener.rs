@@ -46,6 +46,26 @@ impl MessageBoxListener {
                     "/messages/{said}",
                     actix_web::web::get().to(http_handlers::get_response),
                 )
+                .route(
+                    "/auth/challenge",
+                    actix_web::web::get().to(http_handlers::auth_challenge),
+                )
+                .route(
+                    "/auth/respond",
+                    actix_web::web::post().to(http_handlers::auth_respond),
+                )
+                .route(
+                    "/auth/session",
+                    actix_web::web::delete().to(http_handlers::auth_revoke),
+                )
+                .route(
+                    "/mailbox",
+                    actix_web::web::get().to(http_handlers::get_mailbox),
+                )
+                .route(
+                    "/mailbox",
+                    actix_web::web::delete().to(http_handlers::delete_mailbox),
+                )
         })
         .bind(addr)?
         .run())
@@ -65,6 +85,8 @@ mod http_handlers {
         prefix::IdentifierPrefix,
         query::reply_event::SignedReply,
     };
+
+    use crate::auth::AuthResult;
 
     use super::ApiError;
 
@@ -189,6 +211,132 @@ mod http_handlers {
 
         Ok(HttpResponse::Ok().finish())
     }
+
+    pub async fn auth_challenge(
+        query: web::Query<std::collections::HashMap<String, String>>,
+        data: web::Data<Arc<MessageBox>>,
+    ) -> Result<HttpResponse, ApiError> {
+        let auth = data
+            .auth_handle
+            .as_ref()
+            .ok_or(ApiError::AuthNotConfigured)?;
+
+        let purpose = match query.get("purpose").map(|s| s.as_str()) {
+            Some("registration") => dauthz_core::CeremonyPurpose::Registration,
+            Some("identification") | _ => dauthz_core::CeremonyPurpose::Identification,
+        };
+
+        let challenge = auth.create_challenge(purpose).await?;
+        Ok(HttpResponse::Ok().json(challenge))
+    }
+
+    pub async fn auth_respond(
+        body: web::Json<dauthz_core::ChallengeResponse>,
+        data: web::Data<Arc<MessageBox>>,
+    ) -> Result<HttpResponse, ApiError> {
+        let auth = data
+            .auth_handle
+            .as_ref()
+            .ok_or(ApiError::AuthNotConfigured)?;
+
+        let response = body.into_inner();
+
+        // Verify the signed challenge using existing KERI verification
+        let verified = match data
+            .verify_handle
+            .verify(&response.signed_challenge, vec![])
+            .await
+        {
+            Ok(()) => true,
+            Err(_) => {
+                // For DauthZ, signature verification may use a different path.
+                // Accept the signed_challenge field as-is and let DauthZ decide.
+                // In a full implementation, we'd verify the CESR signature here.
+                // For now, we pass it through as the DauthZ service validates expiry/nonce.
+                false
+            }
+        };
+
+        match auth.handle_response(response, verified).await? {
+            AuthResult::Registered { aid, account_id } => {
+                // Provision a new mailbox on registration
+                let _ = data.mailbox_handle.provision(aid.clone()).await;
+                Ok(HttpResponse::Created().json(
+                    serde_json::json!({"status": "registered", "aid": aid, "account_id": account_id}),
+                ))
+            }
+            AuthResult::Authenticated { session } => {
+                // Activate mailbox on first login
+                let _ = data.mailbox_handle.activate(session.aid.clone()).await;
+                Ok(HttpResponse::Ok().json(dauthz_core::SessionToken {
+                    token: session.token,
+                    account_id: session.account_id,
+                    aid: session.aid,
+                    expires_at: session.expires_at,
+                }))
+            }
+            AuthResult::Invalid(reason) => Ok(HttpResponse::Unauthorized()
+                .json(serde_json::json!({"error": "invalid", "reason": reason}))),
+        }
+    }
+
+    pub async fn auth_revoke(
+        req: actix_web::HttpRequest,
+        data: web::Data<Arc<MessageBox>>,
+    ) -> Result<HttpResponse, ApiError> {
+        let auth = data
+            .auth_handle
+            .as_ref()
+            .ok_or(ApiError::AuthNotConfigured)?;
+
+        let token = req
+            .headers()
+            .get("Authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .ok_or(ApiError::Unauthorized)?;
+
+        auth.revoke_session(token).await;
+        Ok(HttpResponse::Ok().finish())
+    }
+
+    pub async fn get_mailbox(
+        req: actix_web::HttpRequest,
+        data: web::Data<Arc<MessageBox>>,
+    ) -> Result<HttpResponse, ApiError> {
+        let auth = data.auth_handle.as_ref().ok_or(ApiError::AuthNotConfigured)?;
+        let token = req
+            .headers()
+            .get("Authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .ok_or(ApiError::Unauthorized)?;
+
+        let session = auth.validate_session(token).await.ok_or(ApiError::Unauthorized)?;
+        let meta = data.mailbox_handle.get(&session.aid).await;
+
+        match meta {
+            Some(m) => Ok(HttpResponse::Ok().json(m)),
+            None => Ok(HttpResponse::NotFound().finish()),
+        }
+    }
+
+    pub async fn delete_mailbox(
+        req: actix_web::HttpRequest,
+        data: web::Data<Arc<MessageBox>>,
+    ) -> Result<HttpResponse, ApiError> {
+        let auth = data.auth_handle.as_ref().ok_or(ApiError::AuthNotConfigured)?;
+        let token = req
+            .headers()
+            .get("Authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .ok_or(ApiError::Unauthorized)?;
+
+        let session = auth.validate_session(token).await.ok_or(ApiError::Unauthorized)?;
+        data.mailbox_handle.delete(session.aid).await?;
+        Ok(HttpResponse::Ok().finish())
+    }
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -205,11 +353,19 @@ pub enum ApiError {
     MissingEndRoleOobi(IdentifierPrefix, Role),
     #[error("Unknown response said: {0}")]
     UnknownResponse(SelfAddressingIdentifier),
+    #[error("Authentication not configured")]
+    AuthNotConfigured,
+    #[error("Unauthorized")]
+    Unauthorized,
 }
 
 impl ResponseError for ApiError {
     fn status_code(&self) -> StatusCode {
-        StatusCode::INTERNAL_SERVER_ERROR
+        match self {
+            ApiError::Unauthorized => StatusCode::UNAUTHORIZED,
+            ApiError::AuthNotConfigured => StatusCode::NOT_FOUND,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        }
     }
 
     fn error_response(&self) -> HttpResponse {

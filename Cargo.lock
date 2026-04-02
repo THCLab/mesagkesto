@@ -990,6 +990,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "dauthz-core"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "uuid",
+]
+
+[[package]]
+name = "dauthz-server"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "dauthz-core",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "der"
 version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2142,10 +2164,14 @@ dependencies = [
  "actix-web",
  "anyhow",
  "cesrox",
+ "chrono",
  "clap 4.5.57",
+ "dauthz-core",
+ "dauthz-server",
  "figment",
  "keri-controller",
  "keri-core",
+ "redb",
  "said",
  "serde",
  "serde_json",
@@ -2154,6 +2180,7 @@ dependencies = [
  "tokio",
  "ureq",
  "url",
+ "uuid",
 ]
 
 [[package]]
@@ -3809,6 +3836,7 @@ version = "1.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee48d38b119b0cd71fe4141b30f5ba9c7c5d9f4e7a3a8b4a674e4b6ef789976f"
 dependencies = [
+ "getrandom 0.3.4",
  "js-sys",
  "wasm-bindgen",
 ]

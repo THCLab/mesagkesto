@@ -148,7 +148,7 @@ pub mod test {
     use tokio::time::sleep;
 
     use crate::{
-        forward_message, notifier::NotifyHandle, responses_store::ResponsesHandle,
+        db::Db, forward_message, notifier::NotifyHandle, responses_store::ResponsesHandle,
         storage::StorageHandle, validate::ValidateHandle, verify::VerifyHandle, MessageboxError,
     };
 
@@ -218,10 +218,12 @@ pub mod test {
         let signature = SelfSigningPrefix::Ed25519Sha512(km1.sign(msg.as_bytes()).unwrap());
         let signature = signing_identifier.sign_with_index(signature, 0).unwrap();
 
+        let test_db_dir = Builder::new().prefix("test-msgdb").tempdir().unwrap();
+        let db = Db::open(test_db_dir.path()).expect("Failed to open test db");
         let notify_handle =
-            NotifyHandle::new("AAAAky1v068:APA91bHHpGtP6M5h3ICFc9AzY35MrkTmjwblkLlEJ1C0yvkrUu7KDkmkXMzPq2q-0o1l49fKxOeDQaKIkZTTEAIX3Jd45j6KNtSempYqop4Psitvz2Ng7iBz-IeS1SGEs1GpnWseJlpP".to_string());
-        let storage_handle = StorageHandle::new(notify_handle.clone());
-        let response_handle = ResponsesHandle::new();
+            NotifyHandle::new("AAAAky1v068:APA91bHHpGtP6M5h3ICFc9AzY35MrkTmjwblkLlEJ1C0yvkrUu7KDkmkXMzPq2q-0o1l49fKxOeDQaKIkZTTEAIX3Jd45j6KNtSempYqop4Psitvz2Ng7iBz-IeS1SGEs1GpnWseJlpP".to_string(), db.clone());
+        let storage_handle = StorageHandle::new(db.clone(), notify_handle.clone());
+        let response_handle = ResponsesHandle::new(db);
         let validator_handle = ValidateHandle::new(
             storage_handle.clone(),
             notify_handle,

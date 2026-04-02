@@ -1,13 +1,12 @@
-use std::collections::HashMap;
-
 use keri_core::actor::prelude::SelfAddressingIdentifier;
 use tokio::sync::{mpsc, oneshot};
+
+use crate::db::Db;
 
 pub enum ResponsesMessage {
     SaveMessage {
         digest: SelfAddressingIdentifier,
         message: String,
-        // where to return result
         sender: oneshot::Sender<u32>,
     },
     GetByDigest {
@@ -17,18 +16,15 @@ pub enum ResponsesMessage {
 }
 
 pub struct ResponsesActor {
-    // From where get messages
     receiver: mpsc::Receiver<ResponsesMessage>,
-    responses: HashMap<SelfAddressingIdentifier, String>,
+    db: Db,
 }
 
 impl ResponsesActor {
-    fn new(receiver: mpsc::Receiver<ResponsesMessage>) -> Self {
-        ResponsesActor {
-            receiver,
-            responses: HashMap::new(),
-        }
+    fn new(receiver: mpsc::Receiver<ResponsesMessage>, db: Db) -> Self {
+        ResponsesActor { receiver, db }
     }
+
     async fn handle_message(&mut self, msg: ResponsesMessage) {
         match msg {
             ResponsesMessage::SaveMessage {
@@ -36,16 +32,26 @@ impl ResponsesActor {
                 message,
                 sender,
             } => {
-                self.responses.insert(digest, message);
-
-                // The `let _ =` ignores any errors when sending.
-                //
-                // This can happen if the `select!` macro is used
-                // to cancel waiting for the response.
-                let _ = sender.send(1);
+                let digest_str = digest.to_string();
+                match self.db.save_response(&digest_str, &message) {
+                    Ok(()) => {
+                        let _ = sender.send(1);
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to save response: {}", e);
+                        let _ = sender.send(0);
+                    }
+                }
             }
             ResponsesMessage::GetByDigest { digest, sender } => {
-                let res = self.responses.get(&digest).map(|d| d.to_owned());
+                let digest_str = digest.to_string();
+                let res = match self.db.get_response(&digest_str) {
+                    Ok(val) => val,
+                    Err(e) => {
+                        eprintln!("Failed to get response: {}", e);
+                        None
+                    }
+                };
                 let _ = sender.send(res);
             }
         }
@@ -64,9 +70,9 @@ pub struct ResponsesHandle {
 }
 
 impl ResponsesHandle {
-    pub fn new() -> Self {
+    pub fn new(db: Db) -> Self {
         let (sender, receiver) = mpsc::channel(8);
-        let actor = ResponsesActor::new(receiver);
+        let actor = ResponsesActor::new(receiver, db);
         tokio::spawn(run_my_actor(actor));
 
         Self {
@@ -82,9 +88,6 @@ impl ResponsesHandle {
             sender: send,
         };
 
-        // Ignore send errors. If this send fails, so does the
-        // recv.await below. There's no reason to check for the
-        // same failure twice.
         let _ = self.responder_sender.send(msg).await;
         recv.await.expect("Actor task has been killed")
     }
@@ -96,16 +99,7 @@ impl ResponsesHandle {
             sender: send,
         };
 
-        // Ignore send errors. If this send fails, so does the
-        // recv.await below. There's no reason to check for the
-        // same failure twice.
         let _ = self.responder_sender.send(msg).await;
         recv.await.expect("Actor task has been killed")
-    }
-}
-
-impl Default for ResponsesHandle {
-    fn default() -> Self {
-        Self::new()
     }
 }

@@ -1,8 +1,7 @@
-use std::collections::HashMap;
-
 use serde_json::json;
 use tokio::sync::{mpsc, oneshot};
 
+use crate::db::Db;
 use crate::notifier::NotifyHandle;
 
 pub type Message = serde_json::Value;
@@ -12,13 +11,11 @@ pub enum StorageMessage {
         key: String,
         digest: String,
         message: Message,
-        // where to return result
         sender: oneshot::Sender<u32>,
     },
     GetBySn {
         key: String,
         index: usize,
-        // where to return result
         sender: oneshot::Sender<Option<String>>,
     },
     GetByDigest {
@@ -29,20 +26,20 @@ pub enum StorageMessage {
 }
 
 pub struct StorageActor {
-    // From where get messages
     receiver: mpsc::Receiver<StorageMessage>,
-    messages: HashMap<String, Vec<(String, Message)>>,
+    db: Db,
     notify_handle: NotifyHandle,
 }
 
 impl StorageActor {
-    fn new(receiver: mpsc::Receiver<StorageMessage>, notify_handle: NotifyHandle) -> Self {
+    fn new(receiver: mpsc::Receiver<StorageMessage>, db: Db, notify_handle: NotifyHandle) -> Self {
         StorageActor {
             receiver,
-            messages: HashMap::new(),
+            db,
             notify_handle,
         }
     }
+
     async fn handle_message(&mut self, msg: StorageMessage) {
         match msg {
             StorageMessage::SaveMessage {
@@ -51,60 +48,56 @@ impl StorageActor {
                 message,
                 sender,
             } => {
-                let block_for_issuer = self.messages.get_mut(&key);
-                match block_for_issuer {
-                    Some(issuance_list) => issuance_list.push((digest.clone(), message)),
-                    None => {
-                        self.messages
-                            .insert(key.clone(), vec![(digest.clone(), message)]);
+                let msg_str = message.to_string();
+                match self.db.save_message(&key, &digest, &msg_str) {
+                    Ok(_seq) => {
+                        self.notify_handle.notify(key, digest).await;
+                        let _ = sender.send(1);
                     }
-                };
-                self.notify_handle.notify(key, digest).await;
-
-                // The `let _ =` ignores any errors when sending.
-                //
-                // This can happen if the `select!` macro is used
-                // to cancel waiting for the response.
-                let _ = sender.send(1);
-            }
-            StorageMessage::GetBySn { key, sender, index } => {
-                match self.messages.get(&key).map(|r| r.to_owned()) {
-                    Some(crud) => {
-                        let last_id = crud.len() - 1;
-                        let out = crud.get(index..).map(|el| {
-                            let messages = el.iter().map(|(_digest, msg)| msg).collect::<Vec<_>>();
-                            json!({"last_sn":last_id,"messages":messages}).to_string()
-                        });
-                        let _ = sender.send(out);
-                    }
-                    None => {
-                        let _ = sender.send(None);
+                    Err(e) => {
+                        eprintln!("Failed to save message: {}", e);
+                        let _ = sender.send(0);
                     }
                 }
+            }
+            StorageMessage::GetBySn { key, sender, index } => {
+                let result = match self.db.get_messages_by_sn(&key, index) {
+                    Ok(Some((last_sn, messages))) => {
+                        let parsed: Vec<serde_json::Value> = messages
+                            .iter()
+                            .filter_map(|m| serde_json::from_str(m).ok())
+                            .collect();
+                        Some(json!({"last_sn": last_sn, "messages": parsed}).to_string())
+                    }
+                    Ok(None) => None,
+                    Err(e) => {
+                        eprintln!("Failed to get messages by sn: {}", e);
+                        None
+                    }
+                };
+                let _ = sender.send(result);
             }
             StorageMessage::GetByDigest {
                 key,
-                digests: digest,
+                digests,
                 sender,
-            } => match self.messages.get(&key).map(|r| r.to_owned()) {
-                Some(crud) => {
-                    let out = crud
-                        .into_iter()
-                        .filter_map(|(dig, value)| {
-                            if digest.contains(&dig) {
-                                Some(value)
-                            } else {
-                                None
-                            }
-                        })
-                        .collect::<Vec<_>>();
-
-                    let _ = sender.send(serde_json::to_string(&out).ok());
-                }
-                None => {
-                    let _ = sender.send(None);
-                }
-            },
+            } => {
+                let result = match self.db.get_messages_by_digest(&key, &digests) {
+                    Ok(Some(messages)) => {
+                        let parsed: Vec<serde_json::Value> = messages
+                            .iter()
+                            .filter_map(|m| serde_json::from_str(m).ok())
+                            .collect();
+                        serde_json::to_string(&parsed).ok()
+                    }
+                    Ok(None) => None,
+                    Err(e) => {
+                        eprintln!("Failed to get messages by digest: {}", e);
+                        None
+                    }
+                };
+                let _ = sender.send(result);
+            }
         }
     }
 }
@@ -121,9 +114,9 @@ pub struct StorageHandle {
 }
 
 impl StorageHandle {
-    pub fn new(notify_handle: NotifyHandle) -> Self {
+    pub fn new(db: Db, notify_handle: NotifyHandle) -> Self {
         let (sender, receiver) = mpsc::channel(8);
-        let actor = StorageActor::new(receiver, notify_handle);
+        let actor = StorageActor::new(receiver, db.clone(), notify_handle);
         tokio::spawn(run_my_actor(actor));
 
         Self {
@@ -140,9 +133,6 @@ impl StorageHandle {
             sender: send,
         };
 
-        // Ignore send errors. If this send fails, so does the
-        // recv.await below. There's no reason to check for the
-        // same failure twice.
         let _ = self.database_sender.send(msg).await;
         recv.await.expect("Actor task has been killed")
     }
@@ -155,9 +145,6 @@ impl StorageHandle {
             sender: send,
         };
 
-        // Ignore send errors. If this send fails, so does the
-        // recv.await below. There's no reason to check for the
-        // same failure twice.
         let _ = self.database_sender.send(msg).await;
         recv.await.expect("Actor task has been killed")
     }
@@ -170,9 +157,6 @@ impl StorageHandle {
             sender: send,
         };
 
-        // Ignore send errors. If this send fails, so does the
-        // recv.await below. There's no reason to check for the
-        // same failure twice.
         let _ = self.database_sender.send(msg).await;
         recv.await.expect("Actor task has been killed")
     }

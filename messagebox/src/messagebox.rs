@@ -12,8 +12,9 @@ use keri_core::{
 };
 
 use crate::{
-    notifier::NotifyHandle, oobis::OobiHandle, responses_store::ResponsesHandle,
-    storage::StorageHandle, validate::ValidateHandle, verify::VerifyHandle, MessageboxError,
+    auth::AuthHandle, db::Db, mailbox::MailboxHandle, notifier::NotifyHandle, oobis::OobiHandle,
+    responses_store::ResponsesHandle, storage::StorageHandle, validate::ValidateHandle,
+    verify::VerifyHandle, MessageboxError,
 };
 
 #[derive(Clone)]
@@ -25,16 +26,20 @@ pub struct MessageBox {
     pub verify_handle: VerifyHandle,
     pub validator_handle: ValidateHandle,
     pub response_handle: ResponsesHandle,
+    pub auth_handle: Option<AuthHandle>,
+    pub mailbox_handle: MailboxHandle,
 }
 
 impl MessageBox {
     pub async fn setup(
+        db: Db,
         kel_path: &Path,
         oobi_path: &Path,
         watcher_oobi: LocationScheme,
         address: url::Url,
         seed: Option<String>,
         server_key: Option<String>,
+        dauthz_state_dir: Option<&Path>,
     ) -> Result<Self, MessageboxError> {
         let signer = Arc::new(
             seed.map(|key| Signer::new_with_seed(&key.parse()?))
@@ -61,14 +66,22 @@ impl MessageBox {
         );
         let notify_handle = if let Some(key) = server_key {
             println!("Firebase server key set: {}", &key);
-            NotifyHandle::new(key)
+            NotifyHandle::new(key, db.clone())
         } else {
             todo!("Firebase server_key is mandatory for now")
         };
-        let storage_handle = StorageHandle::new(notify_handle.clone());
+        let storage_handle = StorageHandle::new(db.clone(), notify_handle.clone());
         let oobi_handle = OobiHandle::new(oobi_path);
         oobi_handle.register(vec![signed_reply]).await;
-        let response_handle = ResponsesHandle::new();
+        let mailbox_handle = MailboxHandle::new(db.clone());
+        let auth_handle = if let Some(auth_dir) = dauthz_state_dir {
+            let service_aid = IdentifierPrefix::Basic(id.clone()).to_string();
+            let service_oobi = address.to_string();
+            Some(AuthHandle::new(auth_dir, &service_aid, &service_oobi, db.clone())?)
+        } else {
+            None
+        };
+        let response_handle = ResponsesHandle::new(db);
         let validator_handle = ValidateHandle::new(
             storage_handle.clone(),
             notify_handle,
@@ -84,6 +97,8 @@ impl MessageBox {
             validator_handle,
             verify_handle,
             response_handle,
+            auth_handle,
+            mailbox_handle,
         })
     }
 

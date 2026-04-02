@@ -1,10 +1,7 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
-
 use serde_json::json;
 use tokio::sync::mpsc;
+
+use crate::db::Db;
 
 pub enum NotifyMessage {
     Notify { identifier: String, digest: String },
@@ -12,25 +9,25 @@ pub enum NotifyMessage {
 }
 
 pub struct NotifyActor {
-    // From where get messages
     receiver: mpsc::Receiver<NotifyMessage>,
     server_key: String,
-    tokens_map: Arc<Mutex<HashMap<String, String>>>,
+    db: Db,
 }
 
 impl NotifyActor {
-    fn new(receiver: mpsc::Receiver<NotifyMessage>, server_key: String) -> Self {
+    fn new(receiver: mpsc::Receiver<NotifyMessage>, server_key: String, db: Db) -> Self {
         NotifyActor {
             receiver,
             server_key,
-            tokens_map: Arc::new(Mutex::new(HashMap::new())),
+            db,
         }
     }
+
     async fn handle_message(&mut self, msg: NotifyMessage) {
         match msg {
             NotifyMessage::Notify { identifier, digest } => {
-                match self.tokens_map.lock().unwrap().get(&identifier) {
-                    Some(token) => {
+                match self.db.get_firebase_token(&identifier) {
+                    Ok(Some(token)) => {
                         let body = json!({
                         "notification": {
                             "body": {"d": digest, "i": identifier},
@@ -52,11 +49,14 @@ impl NotifyActor {
                             .unwrap();
                         println!("Notifying token {}, res: {:?}", token, res);
                     }
-                    None => (),
-                };
+                    Ok(None) => (),
+                    Err(e) => eprintln!("Failed to get firebase token: {}", e),
+                }
             }
             NotifyMessage::SaveToken { identifier, token } => {
-                self.tokens_map.lock().unwrap().insert(identifier, token);
+                if let Err(e) = self.db.save_firebase_token(&identifier, &token) {
+                    eprintln!("Failed to save firebase token: {}", e);
+                }
             }
         }
     }
@@ -74,9 +74,9 @@ pub struct NotifyHandle {
 }
 
 impl NotifyHandle {
-    pub fn new(server_key: String) -> Self {
+    pub fn new(server_key: String, db: Db) -> Self {
         let (sender, receiver) = mpsc::channel(8);
-        let actor = NotifyActor::new(receiver, server_key);
+        let actor = NotifyActor::new(receiver, server_key, db);
         tokio::spawn(run_my_actor(actor));
 
         Self {
@@ -86,19 +86,11 @@ impl NotifyHandle {
 
     pub async fn notify(&self, identifier: String, digest: String) {
         let msg = NotifyMessage::Notify { identifier, digest };
-
-        // Ignore send errors. If this send fails, so does the
-        // recv.await below. There's no reason to check for the
-        // same failure twice.
         let _ = self.notify_sender.send(msg).await;
     }
 
     pub async fn save_token(&self, identifier: String, token: String) {
         let msg = NotifyMessage::SaveToken { identifier, token };
-
-        // Ignore send errors. If this send fails, so does the
-        // recv.await below. There's no reason to check for the
-        // same failure twice.
         let _ = self.notify_sender.send(msg).await;
     }
 }

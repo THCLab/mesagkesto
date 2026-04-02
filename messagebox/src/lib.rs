@@ -4,11 +4,15 @@ use thiserror::Error;
 use url::Url;
 use validate::ExchangeArguments;
 
+pub mod auth;
+pub mod db;
+pub mod mailbox;
 pub mod messagebox;
 pub mod messagebox_listener;
 pub mod notifier;
 pub mod oobis;
 mod responses_store;
+pub mod session;
 pub mod storage;
 pub mod validate;
 pub mod verify;
@@ -45,6 +49,8 @@ pub enum MessageboxError {
     Unparsable(String),
     #[error(transparent)]
     SigningError(#[from] KeysError),
+    #[error("Authentication error: {0}")]
+    AuthError(String),
 }
 
 pub fn register_token(id: String, token: String) -> MessageType {
