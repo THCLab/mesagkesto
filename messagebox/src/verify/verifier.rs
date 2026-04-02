@@ -29,6 +29,8 @@ use tokio::{
     time::sleep,
 };
 
+use tracing::{debug, warn};
+
 use crate::{validate::ValidateHandle, MessageboxError};
 
 use super::{
@@ -191,8 +193,7 @@ impl VerifyData {
             }
 
             if !errs.is_empty() {
-                println!("
-in ask watcher errors: {:?}", errs);
+                warn!(errors = ?errs, "Ask watcher errors");
             }
             break;
         }
@@ -213,7 +214,7 @@ in ask watcher errors: {:?}", errs);
                 )
             })
             .collect::<Result<Vec<bool>, _>>();
-        println!("ver result: {:?}", ver_res);
+        debug!(result = ?ver_res, "Signature verification result");
         match ver_res {
             Ok(res) => {
                 if res.into_iter().all(|a| a) {
@@ -305,15 +306,15 @@ in ask watcher errors: {:?}", errs);
             if let Some(task) = queue.recv().await {
                 match task {
                     VerificationTask::Verify(message, signature, sender) => {
-                        println!("\nHandle verify task");
+                        debug!(message_len = message.len(), "Handle verify task");
                         let _ = sender.send(self.verify_message(&message, signature).await);
                     }
                     VerificationTask::Find(id) => {
-                        println!("\nHandle  find task");
+                        debug!(id = %id, "Handle find task");
                         self.ask_watcher(&id).await
                     }
                     VerificationTask::Reverify(id) => {
-                        println!("\nHandle reverify task");
+                        debug!(id = %id, "Handle reverify task");
                         let (data, signatures) = self.reverify.get(id.clone()).await.unwrap();
                         let message = String::from_utf8(data).unwrap();
                         self.verify_message(&message, signatures).await.unwrap();

@@ -7,6 +7,7 @@ use keri_controller::IdentifierPrefix;
 use keri_core::actor::prelude::SelfAddressingIdentifier;
 use keri_core::{event_message::cesr_adapter::ParseError, oobi::Role};
 use std::{net::ToSocketAddrs, sync::Arc};
+use tracing_actix_web::TracingLogger;
 
 pub struct MessageBoxListener {
     pub messagebox: MessageBox,
@@ -17,6 +18,7 @@ impl MessageBoxListener {
         let state = Data::new(Arc::new(self.messagebox.clone()));
         Ok(HttpServer::new(move || {
             App::new()
+                .wrap(TracingLogger::default())
                 .app_data(state.clone())
                 .route(
                     "/introduce",
@@ -97,6 +99,7 @@ mod http_handlers {
         prefix::IdentifierPrefix,
         query::reply_event::SignedReply,
     };
+    use tracing::{debug, warn};
 
     use crate::auth::AuthResult;
     use crate::ws_session::WsSession;
@@ -115,7 +118,10 @@ mod http_handlers {
     }
 
     pub async fn introduce(data: web::Data<Arc<MessageBox>>) -> Result<HttpResponse, ApiError> {
-        Ok(HttpResponse::Ok().json(data.oobi()))
+        debug!("GET /introduce");
+        let oobi = data.oobi();
+        debug!(oobi = ?oobi, "GET /introduce -> 200");
+        Ok(HttpResponse::Ok().json(oobi))
     }
 
     /// Returns stream of signed reply messages that has endpoint identifier
@@ -124,10 +130,10 @@ mod http_handlers {
         eid: web::Path<IdentifierPrefix>,
         data: web::Data<Arc<MessageBox>>,
     ) -> Result<HttpResponse, ApiError> {
+        debug!(eid = %eid, "GET /oobi/eid");
         let loc_scheme = data.get_loc_scheme_for_id(&eid).await?.unwrap_or_default();
-
         let oobis: Vec<u8> = oobis_to_cesr_stream(&mut loc_scheme.into_iter())?;
-
+        debug!(eid = %eid, body_len = oobis.len(), "GET /oobi/eid -> 200");
         Ok(HttpResponse::Ok()
             .content_type(ContentType::plaintext())
             .body(oobis))
@@ -138,6 +144,7 @@ mod http_handlers {
         data: web::Data<Arc<MessageBox>>,
     ) -> Result<HttpResponse, ApiError> {
         let (cid, role, eid) = path.into_inner();
+        debug!(%cid, ?role, %eid, "GET /oobi/cid/role/eid");
 
         let end_role_feature =
             data.oobi_handle
@@ -146,11 +153,12 @@ mod http_handlers {
         let (end_role, loc_scheme) = tokio::join!(end_role_feature, loc_scheme_feature);
         let oobis = oobis_to_cesr_stream(
             &mut end_role
-                .ok_or(ApiError::MissingEndRoleOobi(cid, role))?
+                .ok_or(ApiError::MissingEndRoleOobi(cid.clone(), role.clone()))?
                 .into_iter()
                 .chain(loc_scheme?.unwrap_or_default().into_iter()),
         )?;
 
+        debug!(%cid, ?role, %eid, body_len = oobis.len(), "GET /oobi/cid/role/eid -> 200");
         Ok(HttpResponse::Ok()
             .content_type(ContentType::plaintext())
             .body(oobis))
@@ -160,11 +168,23 @@ mod http_handlers {
         body: String,
         data: web::Data<Arc<MessageBox>>,
     ) -> Result<HttpResponse, ApiError> {
-        Ok(match data.process_message(body).await {
-            Ok(Some(response)) => HttpResponse::Ok().body(response),
-            Ok(None) => HttpResponse::Ok().finish(),
-            Err(MessageboxError::VerificationFailure) => HttpResponse::Unauthorized().finish(),
-            Err(MessageboxError::ResponseNotReady(said)) => {
+        debug!(body_len = body.len(), "POST /");
+        let result = data.process_message(body).await;
+        Ok(match result {
+            Ok(Some(response)) => {
+                debug!(response_len = response.len(), "POST / -> 200 (with body)");
+                HttpResponse::Ok().body(response)
+            }
+            Ok(None) => {
+                debug!("POST / -> 200 (empty)");
+                HttpResponse::Ok().finish()
+            }
+            Err(MessageboxError::VerificationFailure) => {
+                warn!("POST / -> 401 verification failure");
+                HttpResponse::Unauthorized().finish()
+            }
+            Err(MessageboxError::ResponseNotReady(ref said)) => {
+                debug!(said = %said, "POST / -> 202 response not ready");
                 let message = format!(
                     "Missing event, need to ask later on `/messages/{}` endpoint.",
                     said
@@ -172,12 +192,13 @@ mod http_handlers {
                 HttpResponse::Accepted().body(message)
             }
             Err(MessageboxError::MissingOobi) => {
-                let message =
-                    "Missing oobi, need to be provided to `/resolve` endpoint.".to_string();
-                HttpResponse::UnprocessableEntity().body(message)
+                warn!("POST / -> 422 missing OOBI");
+                HttpResponse::UnprocessableEntity()
+                    .body("Missing oobi, need to be provided to `/resolve` endpoint.")
             }
-            Err(err) => {
-                let message = format!("Message ignored due to error: {}", &err);
+            Err(ref err) => {
+                warn!(error = %err, "POST / -> 400");
+                let message = format!("Message ignored due to error: {}", err);
                 HttpResponse::BadRequest().body(message)
             }
         })
@@ -187,13 +208,10 @@ mod http_handlers {
         body: web::Bytes,
         data: web::Data<Arc<MessageBox>>,
     ) -> Result<HttpResponse, ApiError> {
-        println!(
-            "\nGot oobis to process: \n{}",
-            String::from_utf8_lossy(&body)
-        );
+        debug!(body_len = body.len(), body = %String::from_utf8_lossy(&body), "POST /register");
         let replys = parse_reply_stream(&body)?;
         data.oobi_handle.register(replys).await;
-
+        debug!("POST /register -> 200");
         Ok(HttpResponse::Ok()
             .content_type(ContentType::plaintext())
             .body(()))
@@ -204,10 +222,9 @@ mod http_handlers {
         data: web::Data<Arc<MessageBox>>,
     ) -> Result<HttpResponse, ApiError> {
         let oobi_str = String::from_utf8(body.to_vec()).map_err(|_e| ApiError::Unparsable)?;
-        println!("\nGot oobi to resolve: \n{}", &oobi_str);
-
-        data.resolve_oobi(oobi_str.clone()).await?;
-
+        debug!(oobi = %oobi_str, "POST /resolve");
+        data.resolve_oobi(oobi_str).await?;
+        debug!("POST /resolve -> 200");
         Ok(HttpResponse::Ok().finish())
     }
 
@@ -215,13 +232,13 @@ mod http_handlers {
         said: web::Path<SelfAddressingIdentifier>,
         data: web::Data<Arc<MessageBox>>,
     ) -> Result<HttpResponse, ApiError> {
-        println!("\nRequest responses for: \n{}", &said.to_string());
         let sai = said.into_inner();
+        debug!(said = %sai, "GET /messages/said");
         data.response_handle
             .get_by_digest(sai.clone())
             .await
-            .ok_or(ApiError::UnknownResponse(sai))?;
-
+            .ok_or(ApiError::UnknownResponse(sai.clone()))?;
+        debug!(said = %sai, "GET /messages/said -> 200");
         Ok(HttpResponse::Ok().finish())
     }
 
@@ -234,12 +251,15 @@ mod http_handlers {
             .as_ref()
             .ok_or(ApiError::AuthNotConfigured)?;
 
-        let purpose = match query.get("purpose").map(|s| s.as_str()) {
-            Some("registration") => dauthz_core::CeremonyPurpose::Registration,
-            Some("identification") | _ => dauthz_core::CeremonyPurpose::Identification,
+        let purpose_str = query.get("purpose").map(|s| s.as_str()).unwrap_or("identification");
+        debug!(purpose = %purpose_str, "GET /auth/challenge");
+        let purpose = match purpose_str {
+            "registration" => dauthz_core::CeremonyPurpose::Registration,
+            _ => dauthz_core::CeremonyPurpose::Identification,
         };
 
         let challenge = auth.create_challenge(purpose).await?;
+        debug!(nonce = %challenge.nonce, purpose = %purpose_str, "GET /auth/challenge -> 200");
         Ok(HttpResponse::Ok().json(challenge))
     }
 
@@ -255,6 +275,7 @@ mod http_handlers {
         body: String,
         data: web::Data<Arc<MessageBox>>,
     ) -> Result<HttpResponse, ApiError> {
+        debug!(body_len = body.len(), "POST /auth/respond");
         let auth = data
             .auth_handle
             .as_ref()
@@ -306,14 +327,14 @@ mod http_handlers {
 
         match auth.handle_response(response, verified).await? {
             AuthResult::Registered { aid, account_id } => {
-                // Provision a new mailbox on registration
+                debug!(aid = %aid, account_id = %account_id, "POST /auth/respond -> 201 registered");
                 let _ = data.mailbox_handle.provision(aid.clone()).await;
                 Ok(HttpResponse::Created().json(
                     serde_json::json!({"status": "registered", "aid": aid, "account_id": account_id}),
                 ))
             }
             AuthResult::Authenticated { session } => {
-                // Activate mailbox on first login
+                debug!(aid = %session.aid, "POST /auth/respond -> 200 authenticated");
                 let _ = data.mailbox_handle.activate(session.aid.clone()).await;
                 Ok(HttpResponse::Ok().json(dauthz_core::SessionToken {
                     token: session.token,
@@ -322,8 +343,11 @@ mod http_handlers {
                     expires_at: session.expires_at,
                 }))
             }
-            AuthResult::Invalid(reason) => Ok(HttpResponse::Unauthorized()
-                .json(serde_json::json!({"error": "invalid", "reason": reason}))),
+            AuthResult::Invalid(reason) => {
+                warn!(reason = %reason, "POST /auth/respond -> 401 invalid");
+                Ok(HttpResponse::Unauthorized()
+                    .json(serde_json::json!({"error": "invalid", "reason": reason})))
+            }
         }
     }
 
@@ -331,6 +355,7 @@ mod http_handlers {
         req: actix_web::HttpRequest,
         data: web::Data<Arc<MessageBox>>,
     ) -> Result<HttpResponse, ApiError> {
+        debug!("DELETE /auth/session");
         let auth = data
             .auth_handle
             .as_ref()
@@ -344,6 +369,7 @@ mod http_handlers {
             .ok_or(ApiError::Unauthorized)?;
 
         auth.revoke_session(token).await;
+        debug!("DELETE /auth/session -> 200");
         Ok(HttpResponse::Ok().finish())
     }
 
@@ -351,6 +377,7 @@ mod http_handlers {
         req: actix_web::HttpRequest,
         data: web::Data<Arc<MessageBox>>,
     ) -> Result<HttpResponse, ApiError> {
+        debug!("GET /mailbox");
         let auth = data.auth_handle.as_ref().ok_or(ApiError::AuthNotConfigured)?;
         let token = req
             .headers()
@@ -360,11 +387,18 @@ mod http_handlers {
             .ok_or(ApiError::Unauthorized)?;
 
         let session = auth.validate_session(token).await.ok_or(ApiError::Unauthorized)?;
+        debug!(aid = %session.aid, "GET /mailbox authenticated");
         let meta = data.mailbox_handle.get(&session.aid).await;
 
         match meta {
-            Some(m) => Ok(HttpResponse::Ok().json(m)),
-            None => Ok(HttpResponse::NotFound().finish()),
+            Some(m) => {
+                debug!(aid = %session.aid, state = ?m.state, "GET /mailbox -> 200");
+                Ok(HttpResponse::Ok().json(m))
+            }
+            None => {
+                debug!(aid = %session.aid, "GET /mailbox -> 404");
+                Ok(HttpResponse::NotFound().finish())
+            }
         }
     }
 
@@ -372,6 +406,7 @@ mod http_handlers {
         req: actix_web::HttpRequest,
         data: web::Data<Arc<MessageBox>>,
     ) -> Result<HttpResponse, ApiError> {
+        debug!("DELETE /mailbox");
         let auth = data.auth_handle.as_ref().ok_or(ApiError::AuthNotConfigured)?;
         let token = req
             .headers()
@@ -381,7 +416,9 @@ mod http_handlers {
             .ok_or(ApiError::Unauthorized)?;
 
         let session = auth.validate_session(token).await.ok_or(ApiError::Unauthorized)?;
-        data.mailbox_handle.delete(session.aid).await?;
+        debug!(aid = %session.aid, "DELETE /mailbox authenticated");
+        data.mailbox_handle.delete(session.aid.clone()).await?;
+        debug!(aid = %session.aid, "DELETE /mailbox -> 200");
         Ok(HttpResponse::Ok().finish())
     }
 
@@ -391,6 +428,7 @@ mod http_handlers {
         query: web::Query<std::collections::HashMap<String, String>>,
         data: web::Data<Arc<MessageBox>>,
     ) -> Result<HttpResponse, ApiError> {
+        debug!("GET /ws upgrade request");
         let token = query
             .get("token")
             .ok_or(ApiError::Unauthorized)?;
@@ -405,6 +443,7 @@ mod http_handlers {
             .await
             .ok_or(ApiError::Unauthorized)?;
 
+        debug!(aid = %session.aid, "GET /ws -> 101 upgrading");
         let ws_session = WsSession {
             aid: session.aid,
             last_hb: std::time::Instant::now(),
@@ -427,6 +466,7 @@ mod http_handlers {
         body: web::Json<AclPayload>,
         data: web::Data<Arc<MessageBox>>,
     ) -> Result<HttpResponse, ApiError> {
+        debug!("PUT /mailbox/acl");
         let auth = data.auth_handle.as_ref().ok_or(ApiError::AuthNotConfigured)?;
         let token = req
             .headers()
@@ -436,9 +476,12 @@ mod http_handlers {
             .ok_or(ApiError::Unauthorized)?;
 
         let session = auth.validate_session(token).await.ok_or(ApiError::Unauthorized)?;
+        let tokens = body.into_inner().tokens;
+        debug!(aid = %session.aid, token_count = tokens.len(), "PUT /mailbox/acl authenticated");
         data.acl_handle
-            .set_tokens(session.aid, body.into_inner().tokens)
+            .set_tokens(session.aid.clone(), tokens)
             .await?;
+        debug!(aid = %session.aid, "PUT /mailbox/acl -> 200");
         Ok(HttpResponse::Ok().finish())
     }
 
@@ -446,6 +489,7 @@ mod http_handlers {
         req: actix_web::HttpRequest,
         data: web::Data<Arc<MessageBox>>,
     ) -> Result<HttpResponse, ApiError> {
+        debug!("GET /mailbox/acl");
         let auth = data.auth_handle.as_ref().ok_or(ApiError::AuthNotConfigured)?;
         let token = req
             .headers()
@@ -456,6 +500,7 @@ mod http_handlers {
 
         let session = auth.validate_session(token).await.ok_or(ApiError::Unauthorized)?;
         let tokens = data.acl_handle.get_tokens(&session.aid).await;
+        debug!(aid = %session.aid, token_count = tokens.len(), "GET /mailbox/acl -> 200");
         Ok(HttpResponse::Ok().json(serde_json::json!({"tokens": tokens})))
     }
 }

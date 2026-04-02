@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use keri_controller::IdentifierPrefix;
 use keri_core::event_message::signature::Signature;
 use tokio::sync::{mpsc, oneshot};
+use tracing::debug;
 
 use crate::MessageboxError;
 
@@ -41,7 +42,7 @@ impl ReverifyActor {
                 message,
                 signatures,
             } => {
-                println!("\nSaving to verify later: {}", &message);
+                debug!(id = %id, message_len = message.len(), "Saving to verify later");
                 self.reverify_dict
                     .insert(id, (message.as_bytes().to_vec(), signatures));
             }

@@ -1,5 +1,6 @@
 use redb::TableDefinition;
 use serde::{Deserialize, Serialize};
+use tracing::{debug, warn};
 
 use crate::db::Db;
 
@@ -31,21 +32,22 @@ impl SessionStore {
     pub fn new(db: Db) -> Self {
         // Ensure table exists
         if let Err(e) = db.ensure_table(SESSIONS) {
-            eprintln!("Failed to create sessions table: {}", e);
+            warn!(error = %e, "Failed to create sessions table");
         }
         Self { db }
     }
 
     pub fn save(&self, session: &Session) {
+        debug!(aid = %session.aid, token = %session.token, "Saving session");
         let json = match serde_json::to_string(session) {
             Ok(j) => j,
             Err(e) => {
-                eprintln!("Failed to serialize session: {}", e);
+                warn!(error = %e, "Failed to serialize session");
                 return;
             }
         };
         if let Err(e) = self.db.put(SESSIONS, &session.token, &json) {
-            eprintln!("Failed to save session: {}", e);
+            warn!(error = %e, "Failed to save session");
         }
     }
 

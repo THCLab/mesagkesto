@@ -1,6 +1,7 @@
 use keri_core::actor::prelude::{HashFunction, HashFunctionCode};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
+use tracing::{debug, warn};
 
 use crate::{
     notifier::NotifyHandle, responses_store::ResponsesHandle, storage::StorageHandle,
@@ -84,17 +85,17 @@ impl ValidateActor {
             match parsed {
                 MessageType::Qry(qry) => match qry {
                     QueryArguments::ByDigest { i, d } => {
-                        println!("Getting messages by digest {:?}", &d);
+                        debug!(identifier = %i, digests = ?d, "Query by digest");
                         Ok(self.storage.get_by_digest(&i, d).await)
                     }
                     QueryArguments::BySn { i, s } => {
-                        println!("Getting messages for {} from index {}", &i, s);
+                        debug!(identifier = %i, sn = s, "Query by sn");
                         Ok(self.storage.get_by_index(&i, s).await)
                     }
                 },
                 MessageType::Exn(exn) => match exn {
                     ExchangeArguments::Fwd { i, a } => {
-                        println!("Saving message {} for {}", &a, &i);
+                        debug!(identifier = %i, "Forward message");
                         let digest_algo: HashFunction = (HashFunctionCode::Blake3_256).into();
                         let sai = digest_algo.derive(a.as_bytes()).to_string();
                         self.storage.save(i.clone(), a, sai).await.to_string();
@@ -117,7 +118,7 @@ impl ValidateActor {
                 let _ = sender.send(self.process(&message).await);
             }
             ValidateMessage::ProcessAndSave { message } => {
-                println!("\nIn process and save: {}", message);
+                debug!(message_len = message.len(), "Process and save");
                 let out = self.process(&message).await.unwrap();
                 if let Some(to_save) = out {
                     let digest: keri_core::actor::prelude::SelfAddressingIdentifier =
@@ -169,7 +170,7 @@ impl ValidateHandle {
         match recv.await {
             Ok(res) => res,
             Err(_) => {
-                println!("Actor task has been killed");
+                warn!("Validate actor task has been killed");
                 Err(MessageboxError::KilledSender)
             }
         }

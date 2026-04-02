@@ -70,7 +70,7 @@ impl MessageBox {
             SelfSigningPrefix::Ed25519Sha512(signer.sign(reply.encode()?)?),
         );
         let notify_handle = if let Some(key) = server_key {
-            println!("Firebase server key set: {}", &key);
+            tracing::info!("Firebase server key configured");
             NotifyHandle::new(key, db.clone())
         } else {
             todo!("Firebase server_key is mandatory for now")

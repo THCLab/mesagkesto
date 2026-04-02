@@ -11,6 +11,7 @@ use messagebox::{
     db::Db, messagebox::MessageBox, messagebox_listener::MessageBoxListener, MessageboxError,
 };
 use serde::{Deserialize, Serialize};
+use tracing::info;
 use url::Url;
 
 #[derive(Deserialize)]
@@ -66,9 +67,16 @@ struct Args {
 
 #[actix_web::main]
 async fn main() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
+
     let args = Args::parse();
 
-    println!("Using config file {:?}", args.config_file);
+    info!(config_file = %args.config_file, "Loading configuration");
 
     let cfg = Figment::new()
         .merge(Yaml::file(args.config_file.clone()))
@@ -95,9 +103,9 @@ async fn main() -> Result<()> {
     let messagebox_oobi = data.oobi();
 
     let listener = MessageBoxListener { messagebox: data };
-    println!(
-        "Messagebox is listening. It's oobi is: {}",
-        serde_json::to_string(&messagebox_oobi).map_err(|_e| MessageboxError::OobiParsingError)?
+    info!(
+        oobi = %serde_json::to_string(&messagebox_oobi).map_err(|_e| MessageboxError::OobiParsingError)?,
+        "Messagebox is listening"
     );
     listener
         .listen_http((Ipv4Addr::UNSPECIFIED, cfg.http_port))?

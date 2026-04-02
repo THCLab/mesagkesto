@@ -1,5 +1,6 @@
 use serde_json::json;
 use tokio::sync::{mpsc, oneshot};
+use tracing::{debug, warn};
 
 use crate::db::Db;
 use crate::notifier::NotifyHandle;
@@ -49,20 +50,24 @@ impl StorageActor {
                 sender,
             } => {
                 let msg_str = message.to_string();
+                debug!(key = %key, digest = %digest, "Saving message");
                 match self.db.save_message(&key, &digest, &msg_str) {
                     Ok(_seq) => {
+                        debug!(key = %key, digest = %digest, "Message saved, notifying");
                         self.notify_handle.notify(key, digest).await;
                         let _ = sender.send(1);
                     }
                     Err(e) => {
-                        eprintln!("Failed to save message: {}", e);
+                        warn!(key = %key, error = %e, "Failed to save message");
                         let _ = sender.send(0);
                     }
                 }
             }
             StorageMessage::GetBySn { key, sender, index } => {
+                debug!(key = %key, index = index, "Getting messages by sn");
                 let result = match self.db.get_messages_by_sn(&key, index) {
                     Ok(Some((last_sn, messages))) => {
+                        debug!(key = %key, last_sn = last_sn, count = messages.len(), "Got messages by sn");
                         let parsed: Vec<serde_json::Value> = messages
                             .iter()
                             .filter_map(|m| serde_json::from_str(m).ok())
@@ -71,7 +76,7 @@ impl StorageActor {
                     }
                     Ok(None) => None,
                     Err(e) => {
-                        eprintln!("Failed to get messages by sn: {}", e);
+                        warn!(key = %key, error = %e, "Failed to get messages by sn");
                         None
                     }
                 };
@@ -82,8 +87,10 @@ impl StorageActor {
                 digests,
                 sender,
             } => {
+                debug!(key = %key, digests = ?digests, "Getting messages by digest");
                 let result = match self.db.get_messages_by_digest(&key, &digests) {
                     Ok(Some(messages)) => {
+                        debug!(key = %key, count = messages.len(), "Got messages by digest");
                         let parsed: Vec<serde_json::Value> = messages
                             .iter()
                             .filter_map(|m| serde_json::from_str(m).ok())
@@ -92,7 +99,7 @@ impl StorageActor {
                     }
                     Ok(None) => None,
                     Err(e) => {
-                        eprintln!("Failed to get messages by digest: {}", e);
+                        warn!(key = %key, error = %e, "Failed to get messages by digest");
                         None
                     }
                 };

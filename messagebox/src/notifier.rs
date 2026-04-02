@@ -1,5 +1,6 @@
 use serde_json::json;
 use tokio::sync::mpsc;
+use tracing::{debug, warn};
 
 use crate::db::Db;
 
@@ -28,6 +29,7 @@ impl NotifyActor {
             NotifyMessage::Notify { identifier, digest } => {
                 match self.db.get_firebase_token(&identifier) {
                     Ok(Some(token)) => {
+                        debug!(identifier = %identifier, digest = %digest, "Sending FCM notification");
                         let body = json!({
                         "notification": {
                             "body": {"d": digest, "i": identifier},
@@ -47,15 +49,16 @@ impl NotifyActor {
                             .set("Content-Type", "application/json; charset=UTF-8")
                             .send_json(body)
                             .unwrap();
-                        println!("Notifying token {}, res: {:?}", token, res);
+                        debug!(identifier = %identifier, status = %res.status(), "FCM notification sent");
                     }
                     Ok(None) => (),
-                    Err(e) => eprintln!("Failed to get firebase token: {}", e),
+                    Err(e) => warn!(identifier = %identifier, error = %e, "Failed to get firebase token"),
                 }
             }
             NotifyMessage::SaveToken { identifier, token } => {
+                debug!(identifier = %identifier, "Saving firebase token");
                 if let Err(e) = self.db.save_firebase_token(&identifier, &token) {
-                    eprintln!("Failed to save firebase token: {}", e);
+                    warn!(identifier = %identifier, error = %e, "Failed to save firebase token");
                 }
             }
         }

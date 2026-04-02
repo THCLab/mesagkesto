@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 use actix::prelude::*;
 use actix_web_actors::ws;
 use serde::Deserialize;
+use tracing::{debug, warn};
 
 use crate::connection::{
     Connect, ConnectionManager, Disconnect, QueryPresence, RelayEphemeral, RelayMessage,
@@ -26,7 +27,7 @@ impl WsSession {
     fn start_heartbeat(&self, ctx: &mut ws::WebsocketContext<Self>) {
         ctx.run_interval(HEARTBEAT_INTERVAL, |act, ctx| {
             if Instant::now().duration_since(act.last_hb) > CLIENT_TIMEOUT {
-                println!("WebSocket heartbeat timeout for AID: {}", act.aid);
+                warn!(aid = %act.aid, "WebSocket heartbeat timeout");
                 act.manager.do_send(Disconnect {
                     aid: act.aid.clone(),
                     addr: ctx.address().recipient(),
@@ -45,6 +46,7 @@ impl WsSession {
     ) {
         // Try to parse as a control frame
         if let Ok(frame) = serde_json::from_str::<WsFrame>(text) {
+            debug!(aid = %self.aid, frame_type = %frame.r#type, "WS incoming frame");
             match frame.r#type.as_str() {
                 "msg" => {
                     // Relay message to recipient
@@ -144,6 +146,7 @@ impl Actor for WsSession {
     type Context = ws::WebsocketContext<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
+        debug!(aid = %self.aid, "WS session started");
         self.start_heartbeat(ctx);
         self.manager.do_send(Connect {
             aid: self.aid.clone(),
@@ -152,6 +155,7 @@ impl Actor for WsSession {
     }
 
     fn stopping(&mut self, ctx: &mut Self::Context) -> Running {
+        debug!(aid = %self.aid, "WS session stopping");
         self.manager.do_send(Disconnect {
             aid: self.aid.clone(),
             addr: ctx.address().recipient(),

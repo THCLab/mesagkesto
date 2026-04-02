@@ -12,6 +12,8 @@ use tokio::sync::{
     oneshot,
 };
 
+use tracing::warn;
+
 use crate::{validate::ValidateHandle, MessageboxError};
 
 use self::verifier::VerifyData;
@@ -102,7 +104,7 @@ impl VerifyHandle {
         match recv.await {
             Ok(res) => res,
             Err(_) => {
-                println!("Actor task has been killed");
+                warn!("Verify actor task has been killed");
                 Err(MessageboxError::KilledSender)
             }
         }
@@ -127,7 +129,7 @@ impl VerifyHandle {
         match recv.await {
             Ok(res) => res,
             Err(_) => {
-                println!("Actor task has been killed");
+                warn!("Verify actor task has been killed");
                 Err(MessageboxError::KilledSender)
             }
         }

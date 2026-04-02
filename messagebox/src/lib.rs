@@ -79,7 +79,7 @@ pub fn query_by_digest(receiver: String, digests: Vec<String>) -> MessageType {
 }
 
 pub fn send(message: &str, url: Url) -> Result<(), MessageboxError> {
-    println!("Sending message to: {}", url);
+    tracing::debug!(url = %url, "Sending message");
     ureq::post(url.as_ref())
         .send_string(message)
         .map_err(|e| MessageboxError::Communication(e.to_string()))?;
