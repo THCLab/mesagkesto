@@ -22,6 +22,9 @@ const FIREBASE_TOKENS: TableDefinition<&str, &str> = TableDefinition::new("fireb
 /// Table: aid -> mailbox_metadata_json
 const MAILBOXES: TableDefinition<&str, &str> = TableDefinition::new("mailboxes");
 
+/// Table: aid -> acl_tokens_json (JSON array of hex-encoded HMAC tokens)
+const ACL_TOKENS: TableDefinition<&str, &str> = TableDefinition::new("acl_tokens");
+
 #[derive(Debug)]
 pub struct DbError(Box<dyn std::error::Error + Send + Sync>);
 
@@ -80,6 +83,7 @@ impl Db {
         write_txn.open_table(RESPONSES)?;
         write_txn.open_table(FIREBASE_TOKENS)?;
         write_txn.open_table(MAILBOXES)?;
+        write_txn.open_table(ACL_TOKENS)?;
         write_txn.commit()?;
         Ok(())
     }
@@ -191,6 +195,24 @@ impl Db {
         }
         write_txn.commit()?;
         Ok(())
+    }
+
+    // --- ACL Tokens ---
+
+    pub fn save_acl_tokens(&self, aid: &str, tokens_json: &str) -> Result<(), DbError> {
+        let write_txn = self.inner.begin_write()?;
+        {
+            let mut table = write_txn.open_table(ACL_TOKENS)?;
+            table.insert(aid, tokens_json)?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    pub fn get_acl_tokens(&self, aid: &str) -> Result<Option<String>, DbError> {
+        let read_txn = self.inner.begin_read()?;
+        let table = read_txn.open_table(ACL_TOKENS)?;
+        Ok(table.get(aid)?.map(|v| v.value().to_string()))
     }
 
     // --- Responses ---

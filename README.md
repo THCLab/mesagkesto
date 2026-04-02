@@ -16,6 +16,8 @@ cryptographic signatures against the sender's Key Event Log (KEL).
 - **Persistent storage** — messages stored in embedded redb database, survive restarts
 - **Session management** — JWT-like session tokens with expiry and revocation
 - **Mailbox lifecycle** — provision, activate, suspend, and delete mailboxes
+- **WebSocket real-time transport** — bidirectional messaging with presence and typing indicators
+- **Contact list (ACL)** — HMAC-based blind authorization whitelist; server cannot inspect contacts
 - **Firebase push notifications** — notify clients of new messages
 - **OOBI resolution** — discover and resolve identifier endpoints
 
@@ -84,12 +86,20 @@ Enabled when `dauthz_state_dir` is configured.
 
 ### Mailbox Endpoints
 
-Requires authentication.
+Requires authentication (`Authorization: Bearer <token>`).
 
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET /mailbox` | Get mailbox metadata for authenticated AID |
 | `DELETE /mailbox` | Delete mailbox for authenticated AID |
+| `PUT /mailbox/acl` | Set ACL whitelist tokens |
+| `GET /mailbox/acl` | Get ACL whitelist tokens |
+
+### WebSocket
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET /ws?token=<session_token>` | Upgrade to WebSocket connection |
 
 ### Authentication Flow
 
@@ -100,6 +110,50 @@ Requires authentication.
 5. On **registration**: server provisions a mailbox, returns account info
 6. On **identification**: server issues a `SessionToken` (1hr expiry)
 7. Use the token for authenticated endpoints: `Authorization: Bearer <token>`
+
+### Session Lifecycle
+
+Sessions are issued on successful identification (login) and stored in the embedded redb database.
+
+- **Token format**: UUID v4
+- **Expiry**: 1 hour from issuance
+- **Validation**: checked on every authenticated request; expired sessions are automatically cleaned up
+- **Revocation**: `DELETE /auth/session` with the token in the `Authorization` header
+- **Multi-device**: multiple sessions can be active for the same AID simultaneously
+
+### Contact List (ACL)
+
+The ACL system uses **HMAC-based blind authorization** so the server enforces write permissions without being able to inspect the contact list.
+
+**How it works:**
+
+1. Mailbox owner derives a secret key: `K_whitelist = HKDF(identity_secret, "mesagkesto-whitelist-v1")`
+2. For each allowed contact, owner computes: `token = HMAC-SHA256(K_whitelist, contact_AID)`
+3. Owner uploads the token set: `PUT /mailbox/acl` with `{"tokens": ["<hex>", ...]}`
+4. The server stores these opaque 32-byte tokens per mailbox
+
+**Write authorization:**
+
+- When adding a contact, the recipient computes the token for the sender and shares it out-of-band (e.g., during OOBI exchange)
+- The sender includes this `auth_token` in the message envelope
+- The server checks `acl_tokens.contains(auth_token)` — accepts or rejects with 403
+- The server never learns which AID maps to which token (HMAC is one-way without `K_whitelist`)
+
+### WebSocket Protocol
+
+Connect via `GET /ws?token=<session_token>`. The connection supports these JSON frame types:
+
+| Type | Direction | Description |
+|------|-----------|-------------|
+| `msg` | Client → Server | Relay message to `to` AID. Server responds with `ack`. |
+| `ack` | Server → Client | Confirms message was relayed. `delivered: true` if recipient is online. |
+| `typing` | Client → Server | Typing indicator. Fields: `to`, `state` (`started`/`stopped`). Ephemeral, never stored. |
+| `presence_query` | Client → Server | Query presence for a list of AIDs. Fields: `aids`. |
+| `presence_result` | Server → Client | Response with presence states per AID. |
+| `presence_config` | Client → Server | Set visibility. Fields: `hidden_from` (list of HMAC tokens to hide presence from). |
+| `presence` | Server → Client | Push notification when a contact's presence changes. |
+
+Heartbeat: server pings every 30s, disconnects after 60s without a pong.
 
 ## Tests
 
@@ -122,10 +176,16 @@ The service uses an **actor model** with tokio `mpsc`/`oneshot` channels. Each s
 ```
 HTTP ──────> AuthHandle (DauthZ challenge-response)
            > MailboxHandle (provisioning lifecycle)
+           > AclHandle (whitelist token management)
            > MessageBox ──> VerifyHandle ──> ValidateHandle ──> StorageHandle (redb)
                                                              > NotifyHandle
                          > OobiHandle
                          > ResponsesHandle
+
+WebSocket ─> ConnectionManager ──> WsSession(s)
+                                 > Presence tracking
+                                 > Typing relay
+                                 > Message relay to online recipients
 ```
 
 ### Key Concepts

@@ -66,6 +66,18 @@ impl MessageBoxListener {
                     "/mailbox",
                     actix_web::web::delete().to(http_handlers::delete_mailbox),
                 )
+                .route(
+                    "/ws",
+                    actix_web::web::get().to(http_handlers::ws_upgrade),
+                )
+                .route(
+                    "/mailbox/acl",
+                    actix_web::web::put().to(http_handlers::set_acl),
+                )
+                .route(
+                    "/mailbox/acl",
+                    actix_web::web::get().to(http_handlers::get_acl),
+                )
         })
         .bind(addr)?
         .run())
@@ -87,6 +99,7 @@ mod http_handlers {
     };
 
     use crate::auth::AuthResult;
+    use crate::ws_session::WsSession;
 
     use super::ApiError;
 
@@ -336,6 +349,80 @@ mod http_handlers {
         let session = auth.validate_session(token).await.ok_or(ApiError::Unauthorized)?;
         data.mailbox_handle.delete(session.aid).await?;
         Ok(HttpResponse::Ok().finish())
+    }
+
+    pub async fn ws_upgrade(
+        req: actix_web::HttpRequest,
+        stream: web::Payload,
+        query: web::Query<std::collections::HashMap<String, String>>,
+        data: web::Data<Arc<MessageBox>>,
+    ) -> Result<HttpResponse, ApiError> {
+        let token = query
+            .get("token")
+            .ok_or(ApiError::Unauthorized)?;
+
+        let auth = data
+            .auth_handle
+            .as_ref()
+            .ok_or(ApiError::AuthNotConfigured)?;
+
+        let session = auth
+            .validate_session(token)
+            .await
+            .ok_or(ApiError::Unauthorized)?;
+
+        let ws_session = WsSession {
+            aid: session.aid,
+            last_hb: std::time::Instant::now(),
+            manager: data.connection_manager.clone(),
+        };
+
+        actix_web_actors::ws::start(ws_session, &req, stream)
+            .map_err(|e| ApiError::MessageboxError(
+                crate::MessageboxError::Unparsable(e.to_string()),
+            ))
+    }
+
+    #[derive(serde::Deserialize)]
+    pub struct AclPayload {
+        tokens: Vec<String>,
+    }
+
+    pub async fn set_acl(
+        req: actix_web::HttpRequest,
+        body: web::Json<AclPayload>,
+        data: web::Data<Arc<MessageBox>>,
+    ) -> Result<HttpResponse, ApiError> {
+        let auth = data.auth_handle.as_ref().ok_or(ApiError::AuthNotConfigured)?;
+        let token = req
+            .headers()
+            .get("Authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .ok_or(ApiError::Unauthorized)?;
+
+        let session = auth.validate_session(token).await.ok_or(ApiError::Unauthorized)?;
+        data.acl_handle
+            .set_tokens(session.aid, body.into_inner().tokens)
+            .await?;
+        Ok(HttpResponse::Ok().finish())
+    }
+
+    pub async fn get_acl(
+        req: actix_web::HttpRequest,
+        data: web::Data<Arc<MessageBox>>,
+    ) -> Result<HttpResponse, ApiError> {
+        let auth = data.auth_handle.as_ref().ok_or(ApiError::AuthNotConfigured)?;
+        let token = req
+            .headers()
+            .get("Authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .ok_or(ApiError::Unauthorized)?;
+
+        let session = auth.validate_session(token).await.ok_or(ApiError::Unauthorized)?;
+        let tokens = data.acl_handle.get_tokens(&session.aid).await;
+        Ok(HttpResponse::Ok().json(serde_json::json!({"tokens": tokens})))
     }
 }
 

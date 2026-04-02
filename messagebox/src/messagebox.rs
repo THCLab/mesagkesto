@@ -11,8 +11,11 @@ use keri_core::{
     signer::Signer,
 };
 
+use actix::{Actor, Addr};
+
 use crate::{
-    auth::AuthHandle, db::Db, mailbox::MailboxHandle, notifier::NotifyHandle, oobis::OobiHandle,
+    acl::AclHandle, auth::AuthHandle, connection::ConnectionManager, db::Db,
+    mailbox::MailboxHandle, notifier::NotifyHandle, oobis::OobiHandle,
     responses_store::ResponsesHandle, storage::StorageHandle, validate::ValidateHandle,
     verify::VerifyHandle, MessageboxError,
 };
@@ -28,6 +31,8 @@ pub struct MessageBox {
     pub response_handle: ResponsesHandle,
     pub auth_handle: Option<AuthHandle>,
     pub mailbox_handle: MailboxHandle,
+    pub acl_handle: AclHandle,
+    pub connection_manager: Addr<ConnectionManager>,
 }
 
 impl MessageBox {
@@ -74,6 +79,8 @@ impl MessageBox {
         let oobi_handle = OobiHandle::new(oobi_path);
         oobi_handle.register(vec![signed_reply]).await;
         let mailbox_handle = MailboxHandle::new(db.clone());
+        let acl_handle = AclHandle::new(db.clone());
+        let connection_manager = ConnectionManager::new().start();
         let auth_handle = if let Some(auth_dir) = dauthz_state_dir {
             let service_aid = IdentifierPrefix::Basic(id.clone()).to_string();
             let service_oobi = address.to_string();
@@ -99,6 +106,8 @@ impl MessageBox {
             response_handle,
             auth_handle,
             mailbox_handle,
+            acl_handle,
+            connection_manager,
         })
     }
 

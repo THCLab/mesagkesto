@@ -4,7 +4,9 @@ use thiserror::Error;
 use url::Url;
 use validate::ExchangeArguments;
 
+pub mod acl;
 pub mod auth;
+pub mod connection;
 pub mod db;
 pub mod mailbox;
 pub mod messagebox;
@@ -16,6 +18,7 @@ pub mod session;
 pub mod storage;
 pub mod validate;
 pub mod verify;
+pub mod ws_session;
 
 use crate::validate::MessageType;
 
