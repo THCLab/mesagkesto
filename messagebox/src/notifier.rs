@@ -1,6 +1,6 @@
 use serde_json::json;
 use tokio::sync::mpsc;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::db::Db;
 
@@ -44,21 +44,34 @@ impl NotifyActor {
                         },
                         "to": token,
                         });
-                        let res = ureq::post("https://fcm.googleapis.com/fcm/send")
+                        match ureq::post("https://fcm.googleapis.com/fcm/send")
                             .set("Authorization", &format!("key={}", self.server_key))
                             .set("Content-Type", "application/json; charset=UTF-8")
                             .send_json(body)
-                            .unwrap();
-                        debug!(identifier = %identifier, status = %res.status(), "FCM notification sent");
+                        {
+                            Ok(res) => {
+                                info!(identifier = %identifier, digest = %digest, status = res.status(), "FCM notification sent successfully");
+                                debug!(identifier = %identifier, digest = %digest, status = %res.status(), "FCM notification response details");
+                            }
+                            Err(e) => {
+                                warn!(identifier = %identifier, digest = %digest, error = %e, "Failed to send FCM notification");
+                            }
+                        }
                     }
-                    Ok(None) => (),
-                    Err(e) => warn!(identifier = %identifier, error = %e, "Failed to get firebase token"),
+                    Ok(None) => {
+                        debug!(identifier = %identifier, digest = %digest, "No FCM token found for identifier");
+                    }
+                    Err(e) => {
+                        warn!(identifier = %identifier, digest = %digest, error = %e, "Failed to get firebase token");
+                    }
                 }
             }
             NotifyMessage::SaveToken { identifier, token } => {
                 debug!(identifier = %identifier, "Saving firebase token");
                 if let Err(e) = self.db.save_firebase_token(&identifier, &token) {
                     warn!(identifier = %identifier, error = %e, "Failed to save firebase token");
+                } else {
+                    info!(identifier = %identifier, "Firebase token saved successfully");
                 }
             }
         }
@@ -79,8 +92,9 @@ pub struct NotifyHandle {
 impl NotifyHandle {
     pub fn new(server_key: String, db: Db) -> Self {
         let (sender, receiver) = mpsc::channel(8);
-        let actor = NotifyActor::new(receiver, server_key, db);
+        let actor = NotifyActor::new(receiver, server_key.clone(), db);
         tokio::spawn(run_my_actor(actor));
+        info!("Firebase notifier actor initialized");
 
         Self {
             notify_sender: sender,

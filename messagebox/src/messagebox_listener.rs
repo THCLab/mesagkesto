@@ -68,10 +68,7 @@ impl MessageBoxListener {
                     "/mailbox",
                     actix_web::web::delete().to(http_handlers::delete_mailbox),
                 )
-                .route(
-                    "/ws",
-                    actix_web::web::get().to(http_handlers::ws_upgrade),
-                )
+                .route("/ws", actix_web::web::get().to(http_handlers::ws_upgrade))
                 .route(
                     "/mailbox/acl",
                     actix_web::web::put().to(http_handlers::set_acl),
@@ -267,7 +264,9 @@ mod http_handlers {
                     return Ok(loc.eid.to_string());
                 }
             }
-            Err(ApiError::MessageboxError(crate::MessageboxError::OobiParsingError))
+            Err(ApiError::MessageboxError(
+                crate::MessageboxError::OobiParsingError,
+            ))
         } else {
             // Single OOBI object
             let oobi: keri_core::oobi::Oobi = serde_json::from_str(oobi_str)
@@ -339,15 +338,13 @@ mod http_handlers {
 
         // Parse CESR stream: extract JSON payload + cryptographic signatures
         let (payload_bytes, signatures) = MessageBox::split_cesr_stream(body.as_bytes())?;
-        let payload_str = String::from_utf8(payload_bytes)
-            .map_err(|e| ApiError::MessageboxError(
-                crate::MessageboxError::Unparsable(e.to_string()),
-            ))?;
+        let payload_str = String::from_utf8(payload_bytes).map_err(|e| {
+            ApiError::MessageboxError(crate::MessageboxError::Unparsable(e.to_string()))
+        })?;
 
-        let payload: AuthResponsePayload = serde_json::from_str(&payload_str)
-            .map_err(|e| ApiError::MessageboxError(
-                crate::MessageboxError::Unparsable(e.to_string()),
-            ))?;
+        let payload: AuthResponsePayload = serde_json::from_str(&payload_str).map_err(|e| {
+            ApiError::MessageboxError(crate::MessageboxError::Unparsable(e.to_string()))
+        })?;
 
         debug!(nonce = %payload.nonce, "POST /auth/respond parsed nonce");
 
@@ -414,7 +411,10 @@ mod http_handlers {
         data: web::Data<Arc<MessageBox>>,
     ) -> Result<HttpResponse, ApiError> {
         debug!("GET /mailbox");
-        let auth = data.auth_handle.as_ref().ok_or(ApiError::AuthNotConfigured)?;
+        let auth = data
+            .auth_handle
+            .as_ref()
+            .ok_or(ApiError::AuthNotConfigured)?;
         let token = req
             .headers()
             .get("Authorization")
@@ -422,7 +422,10 @@ mod http_handlers {
             .and_then(|v| v.strip_prefix("Bearer "))
             .ok_or(ApiError::Unauthorized)?;
 
-        let session = auth.validate_session(token).await.ok_or(ApiError::Unauthorized)?;
+        let session = auth
+            .validate_session(token)
+            .await
+            .ok_or(ApiError::Unauthorized)?;
         debug!(aid = %session.aid, "GET /mailbox authenticated");
         let meta = data.mailbox_handle.get(&session.aid).await;
 
@@ -443,7 +446,10 @@ mod http_handlers {
         data: web::Data<Arc<MessageBox>>,
     ) -> Result<HttpResponse, ApiError> {
         debug!("DELETE /mailbox");
-        let auth = data.auth_handle.as_ref().ok_or(ApiError::AuthNotConfigured)?;
+        let auth = data
+            .auth_handle
+            .as_ref()
+            .ok_or(ApiError::AuthNotConfigured)?;
         let token = req
             .headers()
             .get("Authorization")
@@ -451,7 +457,10 @@ mod http_handlers {
             .and_then(|v| v.strip_prefix("Bearer "))
             .ok_or(ApiError::Unauthorized)?;
 
-        let session = auth.validate_session(token).await.ok_or(ApiError::Unauthorized)?;
+        let session = auth
+            .validate_session(token)
+            .await
+            .ok_or(ApiError::Unauthorized)?;
         debug!(aid = %session.aid, "DELETE /mailbox authenticated");
         data.mailbox_handle.delete(session.aid.clone()).await?;
         debug!(aid = %session.aid, "DELETE /mailbox -> 200");
@@ -465,9 +474,7 @@ mod http_handlers {
         data: web::Data<Arc<MessageBox>>,
     ) -> Result<HttpResponse, ApiError> {
         debug!("GET /ws upgrade request");
-        let token = query
-            .get("token")
-            .ok_or(ApiError::Unauthorized)?;
+        let token = query.get("token").ok_or(ApiError::Unauthorized)?;
 
         let auth = data
             .auth_handle
@@ -486,10 +493,9 @@ mod http_handlers {
             manager: data.connection_manager.clone(),
         };
 
-        actix_web_actors::ws::start(ws_session, &req, stream)
-            .map_err(|e| ApiError::MessageboxError(
-                crate::MessageboxError::Unparsable(e.to_string()),
-            ))
+        actix_web_actors::ws::start(ws_session, &req, stream).map_err(|e| {
+            ApiError::MessageboxError(crate::MessageboxError::Unparsable(e.to_string()))
+        })
     }
 
     #[derive(serde::Deserialize)]
@@ -503,7 +509,10 @@ mod http_handlers {
         data: web::Data<Arc<MessageBox>>,
     ) -> Result<HttpResponse, ApiError> {
         debug!("PUT /mailbox/acl");
-        let auth = data.auth_handle.as_ref().ok_or(ApiError::AuthNotConfigured)?;
+        let auth = data
+            .auth_handle
+            .as_ref()
+            .ok_or(ApiError::AuthNotConfigured)?;
         let token = req
             .headers()
             .get("Authorization")
@@ -511,7 +520,10 @@ mod http_handlers {
             .and_then(|v| v.strip_prefix("Bearer "))
             .ok_or(ApiError::Unauthorized)?;
 
-        let session = auth.validate_session(token).await.ok_or(ApiError::Unauthorized)?;
+        let session = auth
+            .validate_session(token)
+            .await
+            .ok_or(ApiError::Unauthorized)?;
         let tokens = body.into_inner().tokens;
         debug!(aid = %session.aid, token_count = tokens.len(), "PUT /mailbox/acl authenticated");
         data.acl_handle
@@ -526,7 +538,10 @@ mod http_handlers {
         data: web::Data<Arc<MessageBox>>,
     ) -> Result<HttpResponse, ApiError> {
         debug!("GET /mailbox/acl");
-        let auth = data.auth_handle.as_ref().ok_or(ApiError::AuthNotConfigured)?;
+        let auth = data
+            .auth_handle
+            .as_ref()
+            .ok_or(ApiError::AuthNotConfigured)?;
         let token = req
             .headers()
             .get("Authorization")
@@ -534,7 +549,10 @@ mod http_handlers {
             .and_then(|v| v.strip_prefix("Bearer "))
             .ok_or(ApiError::Unauthorized)?;
 
-        let session = auth.validate_session(token).await.ok_or(ApiError::Unauthorized)?;
+        let session = auth
+            .validate_session(token)
+            .await
+            .ok_or(ApiError::Unauthorized)?;
         let tokens = data.acl_handle.get_tokens(&session.aid).await;
         debug!(aid = %session.aid, token_count = tokens.len(), "GET /mailbox/acl -> 200");
         Ok(HttpResponse::Ok().json(serde_json::json!({"tokens": tokens})))

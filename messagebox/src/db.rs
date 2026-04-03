@@ -3,6 +3,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use redb::{Database, ReadableTable, TableDefinition};
+use tracing::{debug, info};
 
 /// Table: (mailbox_aid, seq_no) -> message_json_string
 const MESSAGES: TableDefinition<(&str, u64), &str> = TableDefinition::new("messages");
@@ -67,15 +68,19 @@ pub struct Db {
 
 impl Db {
     pub fn open(path: &Path) -> Result<Self, DbError> {
-        let db = Database::create(path.join("mesagkesto.redb"))?;
+        let db_path = path.join("mesagkesto.redb");
+        info!(db_path = %db_path.display(), "Opening database");
+        let db = Database::create(&db_path)?;
         let this = Self {
             inner: Arc::new(db),
         };
         this.init_tables()?;
+        info!("Database initialized successfully");
         Ok(this)
     }
 
     fn init_tables(&self) -> Result<(), DbError> {
+        debug!("Initializing database tables");
         let write_txn = self.inner.begin_write()?;
         write_txn.open_table(MESSAGES)?;
         write_txn.open_table(MESSAGE_INDEX)?;
@@ -85,12 +90,14 @@ impl Db {
         write_txn.open_table(MAILBOXES)?;
         write_txn.open_table(ACL_TOKENS)?;
         write_txn.commit()?;
+        debug!("Database tables initialized");
         Ok(())
     }
 
     // --- Messages ---
 
     pub fn save_message(&self, aid: &str, digest: &str, message: &str) -> Result<u64, DbError> {
+        debug!(aid = %aid, digest = %digest, msg_len = message.len(), "Saving message to database");
         let write_txn = self.inner.begin_write()?;
         let seq = {
             let mut seq_table = write_txn.open_table(SEQUENCES)?;
@@ -107,6 +114,7 @@ impl Db {
             current
         };
         write_txn.commit()?;
+        debug!(aid = %aid, seq = seq, "Message saved to database");
         Ok(seq)
     }
 
@@ -253,10 +261,7 @@ impl Db {
 
     // --- Generic helpers for additional tables ---
 
-    pub fn ensure_table(
-        &self,
-        table_def: TableDefinition<&str, &str>,
-    ) -> Result<(), DbError> {
+    pub fn ensure_table(&self, table_def: TableDefinition<&str, &str>) -> Result<(), DbError> {
         let write_txn = self.inner.begin_write()?;
         write_txn.open_table(table_def)?;
         write_txn.commit()?;
@@ -288,11 +293,7 @@ impl Db {
         Ok(table.get(key)?.map(|v| v.value().to_string()))
     }
 
-    pub fn delete(
-        &self,
-        table_def: TableDefinition<&str, &str>,
-        key: &str,
-    ) -> Result<(), DbError> {
+    pub fn delete(&self, table_def: TableDefinition<&str, &str>, key: &str) -> Result<(), DbError> {
         let write_txn = self.inner.begin_write()?;
         {
             let mut table = write_txn.open_table(table_def)?;

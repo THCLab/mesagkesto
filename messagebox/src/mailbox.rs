@@ -1,6 +1,7 @@
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
+use tracing::{debug, info, warn};
 
 use crate::db::Db;
 use crate::MessageboxError;
@@ -74,7 +75,9 @@ impl MailboxActor {
     async fn handle_message(&mut self, msg: MailboxMessage) {
         match msg {
             MailboxMessage::Provision { aid, sender } => {
+                debug!(aid = %aid, "Provisioning mailbox");
                 let result = if self.load_metadata(&aid).is_some() {
+                    warn!(aid = %aid, "Mailbox already exists, cannot provision");
                     Err(MessageboxError::AuthError(format!(
                         "Mailbox already exists for AID: {}",
                         aid
@@ -87,34 +90,49 @@ impl MailboxActor {
                         created_at: now.clone(),
                         updated_at: now,
                     };
+                    info!(aid = %aid, "Mailbox provisioned successfully");
                     self.save_metadata(&metadata).map(|_| metadata)
                 };
                 let _ = sender.send(result);
             }
             MailboxMessage::Activate { aid, sender } => {
+                debug!(aid = %aid, "Activating mailbox");
                 let result = match self.load_metadata(&aid) {
                     Some(mut meta) if meta.state == MailboxState::Provisioned => {
                         meta.state = MailboxState::Active;
                         meta.updated_at = Utc::now().to_rfc3339();
+                        info!(aid = %aid, "Mailbox activated successfully");
                         self.save_metadata(&meta)
                     }
-                    Some(_) => Ok(()), // Already active or other state
-                    None => Err(MessageboxError::AuthError("Mailbox not found".to_string())),
+                    Some(meta) => {
+                        debug!(aid = %aid, state = ?meta.state, "Mailbox already in active state");
+                        Ok(()) // Already active or other state
+                    }
+                    None => {
+                        warn!(aid = %aid, "Mailbox not found for activation");
+                        Err(MessageboxError::AuthError("Mailbox not found".to_string()))
+                    }
                 };
                 let _ = sender.send(result);
             }
             MailboxMessage::Get { aid, sender } => {
+                debug!(aid = %aid, "Getting mailbox metadata");
                 let meta = self.load_metadata(&aid);
                 let _ = sender.send(meta);
             }
             MailboxMessage::Delete { aid, sender } => {
+                debug!(aid = %aid, "Deleting mailbox");
                 let result = match self.load_metadata(&aid) {
                     Some(mut meta) => {
                         meta.state = MailboxState::Deleted;
                         meta.updated_at = Utc::now().to_rfc3339();
+                        info!(aid = %aid, "Mailbox marked as deleted");
                         self.save_metadata(&meta)
                     }
-                    None => Err(MessageboxError::AuthError("Mailbox not found".to_string())),
+                    None => {
+                        warn!(aid = %aid, "Mailbox not found for deletion");
+                        Err(MessageboxError::AuthError("Mailbox not found".to_string()))
+                    }
                 };
                 let _ = sender.send(result);
             }
@@ -123,6 +141,7 @@ impl MailboxActor {
                     .load_metadata(&aid)
                     .map(|m| m.state != MailboxState::Deleted)
                     .unwrap_or(false);
+                debug!(aid = %aid, exists = exists, "Checked mailbox existence");
                 let _ = sender.send(exists);
             }
         }

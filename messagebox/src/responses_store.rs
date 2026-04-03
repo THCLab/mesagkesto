@@ -1,6 +1,6 @@
 use keri_core::actor::prelude::SelfAddressingIdentifier;
 use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::db::Db;
 
@@ -34,9 +34,10 @@ impl ResponsesActor {
                 sender,
             } => {
                 let digest_str = digest.to_string();
-                debug!(digest = %digest_str, "Saving response");
+                debug!(digest = %digest_str, msg_len = message.len(), "Saving response");
                 match self.db.save_response(&digest_str, &message) {
                     Ok(()) => {
+                        info!(digest = %digest_str, "Response saved successfully");
                         let _ = sender.send(1);
                     }
                     Err(e) => {
@@ -55,6 +56,10 @@ impl ResponsesActor {
                         None
                     }
                 };
+                match &res {
+                    Some(_) => debug!(digest = %digest_str, "Response found"),
+                    None => debug!(digest = %digest_str, "Response not found"),
+                }
                 let _ = sender.send(res);
             }
         }
@@ -77,6 +82,7 @@ impl ResponsesHandle {
         let (sender, receiver) = mpsc::channel(8);
         let actor = ResponsesActor::new(receiver, db);
         tokio::spawn(run_my_actor(actor));
+        debug!("Responses actor initialized");
 
         Self {
             responder_sender: sender,

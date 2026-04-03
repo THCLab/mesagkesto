@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use keri_controller::IdentifierPrefix;
 use keri_core::event_message::signature::Signature;
 use tokio::sync::{mpsc, oneshot};
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::MessageboxError;
 
@@ -36,18 +36,26 @@ impl ReverifyActor {
     }
     async fn handle_message(&mut self, msg: ReverifyMessage) {
         match msg {
-            // ReverifyMessage::Save { digest, message } => {
             ReverifyMessage::Save {
                 id,
                 message,
                 signatures,
             } => {
-                debug!(id = %id, message_len = message.len(), "Saving to verify later");
+                debug!(id = %id, message_len = message.len(), sig_count = signatures.len(), "Saving message for re-verification");
                 self.reverify_dict
                     .insert(id, (message.as_bytes().to_vec(), signatures));
             }
             ReverifyMessage::Get { id, sender } => {
+                debug!(id = %id, "Retrieving message for re-verification");
                 let message = self.reverify_dict.get(&id);
+                match message {
+                    Some(_) => {
+                        debug!(id = %id, "Message found for re-verification");
+                    }
+                    None => {
+                        warn!(id = %id, "Message not found for re-verification");
+                    }
+                }
                 sender.send(message.unwrap().clone()).unwrap();
             }
         }
@@ -70,6 +78,7 @@ impl ReverifyHandle {
         let (sender, receiver) = mpsc::channel(8);
         let actor = ReverifyActor::new(receiver);
         tokio::spawn(run_my_actor(actor));
+        debug!("Reverify actor initialized");
 
         Self {
             validate_sender: sender,

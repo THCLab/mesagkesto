@@ -1,16 +1,14 @@
-use std::{
-    collections::HashMap,
-    path::Path,
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::HashMap, path::Path, sync::Arc, time::Duration};
 
 use keri_controller::{
     communication::SendingError,
     config::ControllerConfig,
-    error::ControllerError,
     controller::Controller,
-    identifier::{query::{QueryResponse, WatcherResponseError}, Identifier},
+    error::ControllerError,
+    identifier::{
+        query::{QueryResponse, WatcherResponseError},
+        Identifier,
+    },
     BasicPrefix, EndRole, IdentifierPrefix, LocationScheme, Oobi,
 };
 use keri_core::actor::prelude::{HashFunction, HashFunctionCode};
@@ -29,7 +27,7 @@ use tokio::{
     time::sleep,
 };
 
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::{validate::ValidateHandle, MessageboxError};
 
@@ -54,12 +52,15 @@ impl VerifyData {
         seed: Option<String>,
         validate_handle: ValidateHandle,
     ) -> Result<Self, MessageboxError> {
+        debug!(db_path = %db_path.display(), watcher_oobi = ?watcher_oobi, "Initializing verify data");
         let signer = match seed {
             Some(seed) => SignerHandle::new_with_seed(&seed)?,
             None => SignerHandle::new(),
         };
 
         let identifier = signer.public_key().await?;
+        debug!(identifier = ?identifier, "Verifier identifier obtained");
+
         let controller = Arc::new(Controller::new(ControllerConfig {
             db_path: db_path.into(),
             ..Default::default()
@@ -72,11 +73,21 @@ impl VerifyData {
             controller.known_events.clone(),
             controller.communication.clone(),
         );
-        id.resolve_oobi(&oobi).await.map_err(ControllerError::from)?;
-        let end_role = id.add_watcher(watcher_oobi.eid).map_err(ControllerError::from)?;
+
+        debug!("Resolving watcher OOBI");
+        id.resolve_oobi(&oobi)
+            .await
+            .map_err(ControllerError::from)?;
+        debug!("Adding watcher to identifier");
+        let end_role = id
+            .add_watcher(watcher_oobi.eid)
+            .map_err(ControllerError::from)?;
         let signature = signer.sign(end_role.clone()).await?;
-        id.finalize_add_watcher(end_role.as_bytes(), signature).await.map_err(ControllerError::from)?;
+        id.finalize_add_watcher(end_role.as_bytes(), signature)
+            .await
+            .map_err(ControllerError::from)?;
         let (task_sender, task_receiver) = mpsc::channel(20);
+        info!("Verify data initialized successfully");
         Ok(VerifyData {
             signer: signer.clone(),
             controller: id,
@@ -105,11 +116,9 @@ impl VerifyData {
                             (None, es.prefix.clone(), Some(es.event_digest()))
                         }
                     }
-                    keri_core::event_message::signature::SignerData::LastEstablishment(id) => (
-                        storage.get_state(id).map(|e| e.current),
-                        id.clone(),
-                        None,
-                    ),
+                    keri_core::event_message::signature::SignerData::LastEstablishment(id) => {
+                        (storage.get_state(id).map(|e| e.current), id.clone(), None)
+                    }
                     keri_core::event_message::signature::SignerData::JustSignatures => todo!(),
                 };
                 if let Some(k) = kc {
@@ -182,7 +191,8 @@ impl VerifyData {
             });
 
             if resp == QueryResponse::Updates {
-                let _ = self.task_sender
+                let _ = self
+                    .task_sender
                     .send(VerificationTask::Reverify(id.clone()))
                     .await;
             }
@@ -204,6 +214,12 @@ impl VerifyData {
         message: &str,
         signatures: Vec<Signature>,
     ) -> Result<(), MessageboxError> {
+        debug!(
+            message_len = message.len(),
+            sig_count = signatures.len(),
+            "Verifying message"
+        );
+
         let ver_res = signatures
             .iter()
             .map(|sig| {
@@ -215,41 +231,55 @@ impl VerifyData {
             })
             .collect::<Result<Vec<bool>, _>>();
         debug!(result = ?ver_res, "Signature verification result");
+
         match ver_res {
             Ok(res) => {
                 if res.into_iter().all(|a| a) {
+                    info!("Message verified successfully");
                     Ok(())
                 } else {
+                    warn!("Message verification failed: some signatures invalid");
                     Err(MessageboxError::VerificationFailure)
                 }
             }
             Err(MessageboxError::MissingEvent(id, _said)) => {
+                debug!(id = %id, "Missing event, checking OOBI");
                 if self.has_oobi(&id).await {
+                    info!(id = %id, "Saving message for re-verification after KEL update");
                     self.reverify
                         .save(id.clone(), message.to_string(), signatures)
                         .await
                         .unwrap();
                     // Ask watcher
                     {
-                        let _ = self.task_sender
+                        let _ = self
+                            .task_sender
                             .send(VerificationTask::Find(id.clone()))
                             .await;
                     }
 
                     let digest: keri_core::actor::prelude::SelfAddressingIdentifier =
                         HashFunction::from(HashFunctionCode::Blake3_256).derive(message.as_bytes());
+                    warn!(id = %id, digest = %digest, "Response not ready, waiting for KEL update");
                     Err(MessageboxError::ResponseNotReady(digest))
                 } else {
+                    warn!(id = %id, "Missing OOBI for identifier, cannot verify");
                     Err(MessageboxError::MissingOobi)
                 }
             }
-            Err(e) => Err(e),
+            Err(e) => {
+                warn!(error = %e, "Message verification error");
+                Err(e)
+            }
         }
     }
 
     async fn handle_oobi(&self, oobi_str: &str) -> Result<(), MessageboxError> {
+        debug!(oobi = %oobi_str, "Processing OOBI");
         let oobi: Oobi =
             serde_json::from_str(oobi_str).map_err(|_| MessageboxError::OobiParsingError)?;
+
+        debug!("Saving witness OOBI if present");
         // Save witness oobi to be able to check, if we know it already!!!!
         match &oobi {
             Oobi::EndRole(EndRole {
@@ -261,25 +291,41 @@ impl VerifyData {
                     let mut w = self.witnesses.lock().await;
                     match w.get_mut(cid) {
                         Some(s) => {
-                            s.push(bp.clone());
+                            if !s.contains(bp) {
+                                s.push(bp.clone());
+                                debug!(cid = ?cid, eid = ?bp, "Added witness to existing list");
+                            } else {
+                                debug!(cid = ?cid, eid = ?bp, "Witness already in list");
+                            }
                         }
                         None => {
                             w.insert(cid.clone(), vec![bp.clone()]);
+                            debug!(cid = ?cid, eid = ?bp, "Created new witness list");
                         }
                     };
+                } else {
+                    debug!(role = ?role, "OOBI is not a witness role, skipping");
                 };
             }
-            _ => {}
+            _ => {
+                debug!("OOBI is not an EndRole type");
+            }
         };
+
+        debug!("Resolving OOBI through controller");
         self.controller
             .resolve_oobi(&oobi)
             .await
             .map_err(ControllerError::from)
             .map_err(MessageboxError::OobiError)?;
+
+        debug!("Sending OOBI to watcher");
         self.controller
             .send_oobi_to_watcher(self.controller.id(), &oobi)
             .await
             .map_err(MessageboxError::OobiError)?;
+
+        info!(oobi = %oobi_str, "OOBI processed successfully");
         Ok(())
     }
 
@@ -290,7 +336,8 @@ impl VerifyData {
                 signatures,
                 sender,
             } => {
-                let _ = self.task_sender
+                let _ = self
+                    .task_sender
                     .send(VerificationTask::Verify(message, signatures, sender))
                     .await;
             }
@@ -301,24 +348,38 @@ impl VerifyData {
     }
 
     pub async fn handle_task(&self) {
+        debug!("Verification task handler started");
         loop {
             let mut queue = self.task_queue.lock().await;
             if let Some(task) = queue.recv().await {
                 match task {
                     VerificationTask::Verify(message, signature, sender) => {
-                        debug!(message_len = message.len(), "Handle verify task");
+                        debug!(
+                            message_len = message.len(),
+                            sig_count = signature.len(),
+                            "Handle verify task"
+                        );
                         let _ = sender.send(self.verify_message(&message, signature).await);
                     }
                     VerificationTask::Find(id) => {
                         debug!(id = %id, "Handle find task");
+                        info!(id = %id, "Querying watcher for identifier");
                         self.ask_watcher(&id).await
                     }
                     VerificationTask::Reverify(id) => {
                         debug!(id = %id, "Handle reverify task");
+                        info!(id = %id, "Re-verifying message after KEL update");
                         let (data, signatures) = self.reverify.get(id.clone()).await.unwrap();
                         let message = String::from_utf8(data).unwrap();
-                        self.verify_message(&message, signatures).await.unwrap();
-                        self.validate_handle.process_and_save(message).await;
+                        match self.verify_message(&message, signatures).await {
+                            Ok(_) => {
+                                info!(id = %id, "Re-verification successful, processing message");
+                                self.validate_handle.process_and_save(message).await;
+                            }
+                            Err(e) => {
+                                warn!(id = %id, error = %e, "Re-verification failed");
+                            }
+                        }
                     }
                 };
             }

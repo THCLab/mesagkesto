@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use actix::prelude::*;
 use actix_web_actors::ws;
 use serde::Deserialize;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::connection::{
     Connect, ConnectionManager, Disconnect, QueryPresence, RelayEphemeral, RelayMessage,
@@ -27,7 +27,7 @@ impl WsSession {
     fn start_heartbeat(&self, ctx: &mut ws::WebsocketContext<Self>) {
         ctx.run_interval(HEARTBEAT_INTERVAL, |act, ctx| {
             if Instant::now().duration_since(act.last_hb) > CLIENT_TIMEOUT {
-                warn!(aid = %act.aid, "WebSocket heartbeat timeout");
+                warn!(aid = %act.aid, "WebSocket heartbeat timeout, closing connection");
                 act.manager.do_send(Disconnect {
                     aid: act.aid.clone(),
                     addr: ctx.address().recipient(),
@@ -39,11 +39,7 @@ impl WsSession {
         });
     }
 
-    fn handle_text_message(
-        &self,
-        text: &str,
-        ctx: &mut ws::WebsocketContext<Self>,
-    ) {
+    fn handle_text_message(&self, text: &str, ctx: &mut ws::WebsocketContext<Self>) {
         // Try to parse as a control frame
         if let Ok(frame) = serde_json::from_str::<WsFrame>(text) {
             debug!(aid = %self.aid, frame_type = %frame.r#type, "WS incoming frame");
@@ -51,6 +47,7 @@ impl WsSession {
                 "msg" => {
                     // Relay message to recipient
                     if let Some(to) = frame.to {
+                        debug!(aid = %self.aid, to_aid = %to, "Relaying message");
                         let manager = self.manager.clone();
                         let text = text.to_string();
                         ctx.spawn(
@@ -76,18 +73,24 @@ impl WsSession {
                                 ctx.text(ack_text);
                             }),
                         );
+                    } else {
+                        warn!(aid = %self.aid, "Message frame missing 'to' field");
                     }
                 }
                 "typing" => {
                     if let Some(to) = frame.to {
+                        debug!(aid = %self.aid, to_aid = %to, "Relaying typing indicator");
                         self.manager.do_send(RelayEphemeral {
                             to_aid: to,
                             text: text.to_string(),
                         });
+                    } else {
+                        debug!(aid = %self.aid, "Typing frame missing 'to' field");
                     }
                 }
                 "presence_query" => {
                     if let Some(aids) = frame.aids {
+                        debug!(aid = %self.aid, query_count = aids.len(), "Querying presence");
                         let manager = self.manager.clone();
                         ctx.spawn(
                             async move {
@@ -108,14 +111,19 @@ impl WsSession {
                                 ctx.text(result_text);
                             }),
                         );
+                    } else {
+                        debug!(aid = %self.aid, "Presence query frame missing 'aids' field");
                     }
                 }
                 "presence_config" => {
                     if let Some(hidden_from) = frame.hidden_from {
+                        debug!(aid = %self.aid, hidden_count = hidden_from.len(), "Updating presence config");
                         self.manager.do_send(SetPresenceConfig {
                             aid: self.aid.clone(),
                             hidden_from,
                         });
+                    } else {
+                        debug!(aid = %self.aid, "Presence config frame missing 'hidden_from' field");
                     }
                 }
                 _ => {
@@ -126,9 +134,7 @@ impl WsSession {
                 }
             }
         } else {
-            ctx.text(
-                serde_json::json!({"type": "error", "message": "invalid JSON"}).to_string(),
-            );
+            ctx.text(serde_json::json!({"type": "error", "message": "invalid JSON"}).to_string());
         }
     }
 }
@@ -146,7 +152,8 @@ impl Actor for WsSession {
     type Context = ws::WebsocketContext<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
-        debug!(aid = %self.aid, "WS session started");
+        info!(aid = %self.aid, "WebSocket session started");
+        debug!(aid = %self.aid, "Starting heartbeat");
         self.start_heartbeat(ctx);
         self.manager.do_send(Connect {
             aid: self.aid.clone(),
@@ -155,7 +162,7 @@ impl Actor for WsSession {
     }
 
     fn stopping(&mut self, ctx: &mut Self::Context) -> Running {
-        debug!(aid = %self.aid, "WS session stopping");
+        info!(aid = %self.aid, "WebSocket session stopping");
         self.manager.do_send(Disconnect {
             aid: self.aid.clone(),
             addr: ctx.address().recipient(),
@@ -176,7 +183,8 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
     fn handle(&mut self, msg: Result<ws::Message, ws::ProtocolError>, ctx: &mut Self::Context) {
         let msg = match msg {
             Ok(msg) => msg,
-            Err(_) => {
+            Err(e) => {
+                warn!(aid = %self.aid, error = %e, "WebSocket protocol error, stopping");
                 ctx.stop();
                 return;
             }
@@ -194,15 +202,19 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                 self.handle_text_message(&text, ctx);
             }
             ws::Message::Binary(bin) => {
+                debug!(aid = %self.aid, bin_len = bin.len(), "Received binary frame");
                 // Binary frames are forwarded as-is (for E2E encrypted payloads)
                 // For now, echo back — will be routed in future
                 ctx.binary(bin);
             }
             ws::Message::Close(reason) => {
+                debug!(aid = %self.aid, reason = ?reason, "WebSocket close requested");
                 ctx.close(reason);
                 ctx.stop();
             }
-            _ => (),
+            _ => {
+                debug!(aid = %self.aid, "Received unhandled WebSocket frame type");
+            }
         }
     }
 }

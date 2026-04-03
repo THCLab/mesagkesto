@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use tokio::sync::{mpsc, oneshot};
+use tracing::{debug, info, warn};
 
 use crate::db::Db;
 use crate::MessageboxError;
@@ -43,6 +44,7 @@ impl AclActor {
 
     fn load_tokens(&mut self, aid: &str) -> &HashSet<String> {
         if !self.cache.contains_key(aid) {
+            debug!(aid = %aid, "Loading ACL tokens from database");
             let tokens = self
                 .db
                 .get_acl_tokens(aid)
@@ -50,8 +52,10 @@ impl AclActor {
                 .flatten()
                 .and_then(|json| serde_json::from_str::<Vec<String>>(&json).ok())
                 .unwrap_or_default();
+            let count = tokens.len();
             self.cache
                 .insert(aid.to_string(), tokens.into_iter().collect());
+            debug!(aid = %aid, token_count = count, "ACL tokens loaded");
         }
         self.cache.get(aid).unwrap()
     }
@@ -63,6 +67,7 @@ impl AclActor {
                 tokens,
                 sender,
             } => {
+                debug!(aid = %aid, token_count = tokens.len(), "Setting ACL tokens");
                 let result = match serde_json::to_string(&tokens) {
                     Ok(json) => self
                         .db
@@ -71,17 +76,23 @@ impl AclActor {
                     Err(e) => Err(MessageboxError::Unparsable(e.to_string())),
                 };
                 if result.is_ok() {
-                    self.cache
-                        .insert(aid, tokens.into_iter().collect());
+                    let aid_clone = aid.clone();
+                    self.cache.insert(aid, tokens.into_iter().collect());
+                    info!(aid = %aid_clone, "ACL tokens updated successfully");
+                } else {
+                    warn!(aid = %aid, "Failed to set ACL tokens");
                 }
                 let _ = sender.send(result);
             }
             AclMessage::CheckToken { aid, token, sender } => {
                 let tokens = self.load_tokens(&aid);
-                let _ = sender.send(tokens.contains(&token));
+                let authorized = tokens.contains(&token);
+                debug!(aid = %aid, authorized = authorized, "ACL token check");
+                let _ = sender.send(authorized);
             }
             AclMessage::GetTokens { aid, sender } => {
                 let tokens = self.load_tokens(&aid);
+                debug!(aid = %aid, token_count = tokens.len(), "Getting ACL tokens");
                 let _ = sender.send(tokens.iter().cloned().collect());
             }
         }
@@ -104,6 +115,7 @@ impl AclHandle {
         let (sender, receiver) = mpsc::channel(8);
         let actor = AclActor::new(receiver, db);
         tokio::spawn(run_acl_actor(actor));
+        debug!("ACL actor initialized");
         Self { sender }
     }
 

@@ -1,7 +1,7 @@
 use keri_core::actor::prelude::{HashFunction, HashFunctionCode};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::{
     notifier::NotifyHandle, responses_store::ResponsesHandle, storage::StorageHandle,
@@ -81,33 +81,39 @@ impl ValidateActor {
     }
 
     async fn process(&self, message: &str) -> Result<Option<String>, MessageboxError> {
+        debug!(message_len = message.len(), "Processing message");
         if let Ok(parsed) = serde_json::from_str::<MessageType>(message) {
             match parsed {
                 MessageType::Qry(qry) => match qry {
                     QueryArguments::ByDigest { i, d } => {
-                        debug!(identifier = %i, digests = ?d, "Query by digest");
+                        debug!(identifier = %i, digest_count = d.len(), "Query by digest");
                         Ok(self.storage.get_by_digest(&i, d).await)
                     }
                     QueryArguments::BySn { i, s } => {
-                        debug!(identifier = %i, sn = s, "Query by sn");
+                        debug!(identifier = %i, sn = s, "Query by sequence number");
                         Ok(self.storage.get_by_index(&i, s).await)
                     }
                 },
                 MessageType::Exn(exn) => match exn {
                     ExchangeArguments::Fwd { i, a } => {
-                        debug!(identifier = %i, "Forward message");
+                        info!(from_identifier = %i, msg_len = a.len(), "Forwarding message");
                         let digest_algo: HashFunction = (HashFunctionCode::Blake3_256).into();
                         let sai = digest_algo.derive(a.as_bytes()).to_string();
                         self.storage.save(i.clone(), a, sai).await.to_string();
                         Ok(None)
                     }
                     ExchangeArguments::SetFirebase { i, f: t } => {
+                        info!(identifier = %i, "Registering Firebase token");
                         self.notify.save_token(i, t).await;
                         Ok(None)
                     }
                 },
             }
         } else {
+            warn!(
+                message_len = message.len(),
+                "Failed to parse message as MessageType"
+            );
             Err(MessageboxError::UnknownMessage(message.into()))
         }
     }
@@ -115,15 +121,29 @@ impl ValidateActor {
     async fn handle_message(&mut self, msg: ValidateMessage) {
         match msg {
             ValidateMessage::Authenticate { message, sender } => {
+                debug!(
+                    message_len = message.len(),
+                    "Validating and authenticating message"
+                );
                 let _ = sender.send(self.process(&message).await);
             }
             ValidateMessage::ProcessAndSave { message } => {
-                debug!(message_len = message.len(), "Process and save");
-                let out = self.process(&message).await.unwrap();
-                if let Some(to_save) = out {
-                    let digest: keri_core::actor::prelude::SelfAddressingIdentifier =
-                        HashFunction::from(HashFunctionCode::Blake3_256).derive(message.as_bytes());
-                    self.responses_handle.save(to_save, digest).await;
+                debug!(message_len = message.len(), "Processing and saving message");
+                match self.process(&message).await {
+                    Ok(to_save) => {
+                        if let Some(response) = to_save {
+                            debug!(response_len = response.len(), "Saving async query response");
+                            let digest: keri_core::actor::prelude::SelfAddressingIdentifier =
+                                HashFunction::from(HashFunctionCode::Blake3_256)
+                                    .derive(message.as_bytes());
+                            self.responses_handle.save(response, digest).await;
+                        } else {
+                            debug!("No async response to save");
+                        };
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "Failed to process message");
+                    }
                 };
             }
         }
@@ -150,6 +170,7 @@ impl ValidateHandle {
         let (sender, receiver) = mpsc::channel(8);
         let actor = ValidateActor::new(receiver, storage_handle, notify_handle, responses);
         tokio::spawn(run_my_actor(actor));
+        debug!("Validate actor initialized");
 
         Self {
             validate_sender: sender,

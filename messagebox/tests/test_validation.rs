@@ -8,7 +8,6 @@ use url::Url;
 
 #[actix_web::test]
 async fn test_validation() -> Result<(), Error> {
-
     if std::env::var("RUN_NETWORK_TESTS").is_err() {
         return Ok(());
     }

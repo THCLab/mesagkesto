@@ -141,9 +141,8 @@ pub mod test {
     use std::{sync::Arc, time::Duration};
 
     use keri_controller::{
-        controller::Controller,
-        config::ControllerConfig, BasicPrefix, KeyManager,
-        LocationScheme, SelfSigningPrefix,
+        config::ControllerConfig, controller::Controller, BasicPrefix, KeyManager, LocationScheme,
+        SelfSigningPrefix,
     };
     use serde_json::json;
     use tempfile::Builder;
@@ -156,7 +155,6 @@ pub mod test {
 
     #[actix_web::test]
     async fn test_verify_handle() -> Result<(), MessageboxError> {
-
         if std::env::var("RUN_NETWORK_TESTS").is_err() {
             return Ok(());
         }
@@ -189,8 +187,7 @@ pub mod test {
             let signature =
                 SelfSigningPrefix::Ed25519Sha512(km1.sign(icp_event.as_bytes()).unwrap());
 
-            cont
-                .finalize_incept(icp_event.as_bytes(), &signature)
+            cont.finalize_incept(icp_event.as_bytes(), &signature)
                 .unwrap()
         };
 

@@ -12,6 +12,7 @@ use keri_core::{
 };
 
 use actix::{Actor, Addr};
+use tracing::{debug, info};
 
 use crate::{
     acl::AclHandle, auth::AuthHandle, connection::ConnectionManager, db::Db,
@@ -46,11 +47,14 @@ impl MessageBox {
         server_key: Option<String>,
         dauthz_state_dir: Option<&Path>,
     ) -> Result<Self, MessageboxError> {
+        debug!("Setting up messagebox");
         let signer = Arc::new(
             seed.map(|key| Signer::new_with_seed(&key.parse()?))
                 .unwrap_or_else(|| Ok(Signer::new()))?,
         );
         let id = BasicPrefix::Ed25519NT(signer.public_key());
+        debug!(identifier = ?id, "Messagebox identifier created");
+
         let scheme = address
             .scheme()
             .parse()
@@ -60,7 +64,7 @@ impl MessageBox {
             LocationScheme::new(IdentifierPrefix::Basic(id.clone()), scheme, address.clone());
 
         let reply = ReplyEvent::new_reply(
-            ReplyRoute::LocScheme(loc_scheme),
+            ReplyRoute::LocScheme(loc_scheme.clone()),
             HashFunctionCode::Blake3_256,
             SerializationFormats::JSON,
         );
@@ -69,6 +73,8 @@ impl MessageBox {
             id.clone(),
             SelfSigningPrefix::Ed25519Sha512(signer.sign(reply.encode()?)?),
         );
+        debug!("Signed own OOBI");
+
         let notify_handle = if let Some(key) = server_key {
             tracing::info!("Firebase server key configured");
             NotifyHandle::new(key, db.clone())
@@ -78,12 +84,15 @@ impl MessageBox {
         let storage_handle = StorageHandle::new(db.clone(), notify_handle.clone());
         let oobi_handle = OobiHandle::new(oobi_path);
         oobi_handle.register(vec![signed_reply]).await;
+        info!("Own OOBI registered");
+
         let mailbox_handle = MailboxHandle::new(db.clone());
         let acl_handle = AclHandle::new(db.clone());
         let connection_manager = ConnectionManager::new().start();
         let auth_handle = if let Some(auth_dir) = dauthz_state_dir {
             let service_aid = IdentifierPrefix::Basic(id.clone()).to_string();
             let service_oobi = address.to_string();
+            debug!(dauthz_dir = %auth_dir.display(), "Initializing DauthZ authentication");
             Some(AuthHandle::new(
                 auth_dir,
                 &service_aid,
@@ -93,6 +102,7 @@ impl MessageBox {
                 id.clone(),
             )?)
         } else {
+            debug!("DauthZ authentication disabled (no state directory)");
             None
         };
         let response_handle = ResponsesHandle::new(db);
@@ -101,8 +111,11 @@ impl MessageBox {
             notify_handle,
             response_handle.clone(),
         );
+        debug!("Initializing verify handle");
         let verify_handle =
             VerifyHandle::new(kel_path, watcher_oobi, validator_handle.clone()).await?;
+
+        info!("Messagebox setup completed successfully");
         Ok(Self {
             public_address: address,
             signer,
@@ -119,22 +132,29 @@ impl MessageBox {
     }
 
     pub async fn process_message(&self, body: String) -> Result<Option<String>, MessageboxError> {
+        debug!(body_len = body.len(), "Processing incoming message");
         let (data, signatures) = Self::split_cesr_stream(body.as_bytes())?;
         let payload_str =
             String::from_utf8(data).map_err(|e| MessageboxError::Unparsable(e.to_string()))?;
-        match self
-            .verify_handle
-            .verify(&payload_str, signatures.collect())
-            .await
-        {
-            Ok(_) => self.validator_handle.validate(payload_str).await,
+        let sig_vec: Vec<_> = signatures.collect();
+        debug!(sig_count = sig_vec.len(), "Message signatures parsed");
+
+        match self.verify_handle.verify(&payload_str, sig_vec).await {
+            Ok(_) => {
+                info!("Message verified successfully, validating");
+                self.validator_handle.validate(payload_str).await
+            }
             // Err(MessageboxError::MissingEvent(id, dig )) => {
             // },
-            Err(e) => Err(e),
+            Err(e) => {
+                tracing::warn!(error = %e, "Message verification failed");
+                Err(e)
+            }
         }
     }
 
     pub async fn resolve_oobi(&self, oobi: String) -> Result<(), MessageboxError> {
+        debug!(oobi = %oobi, "Resolving OOBI");
         self.verify_handle.resolve_oobi(oobi).await
     }
 

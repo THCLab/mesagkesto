@@ -8,7 +8,7 @@ use keri_core::prefix::{BasicPrefix, CesrPrimitive, SelfSigningPrefix};
 use keri_core::signer::Signer;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
-use tracing::debug;
+use tracing::{debug, info, warn};
 
 use crate::db::Db;
 use crate::session::{Session, SessionStore};
@@ -98,10 +98,7 @@ impl AuthActor {
         // Build the CESR attachment: NontransReceiptCouples group
         let cesr_sig = SelfSigningPrefix::Ed25519Sha512(sig);
         let couple_str = format!("{}{}", self.identifier.to_str(), cesr_sig.to_str());
-        let group = format!(
-            "-CAB{}",
-            couple_str
-        );
+        let group = format!("-CAB{}", couple_str);
 
         let mut stream = payload_json.to_vec();
         stream.extend_from_slice(group.as_bytes());
@@ -151,10 +148,12 @@ impl AuthActor {
                 verified,
                 sender,
             } => {
+                debug!(nonce = %nonce, verified = verified, "Handling auth response");
                 // Look up the bound entity for this nonce
                 let bound = match self.bound_entities.remove(&nonce) {
                     Some(b) => b,
                     None => {
+                        warn!(nonce = %nonce, "Unknown or expired challenge nonce");
                         let _ = sender.send(Ok(AuthResult::Invalid(
                             "unknown or expired challenge nonce".to_string(),
                         )));
@@ -174,36 +173,55 @@ impl AuthActor {
                     Ok(dauthz_core::verification::VerificationResult::Registered {
                         aid,
                         account_id,
-                    }) => Ok(AuthResult::Registered { aid, account_id }),
+                    }) => {
+                        info!(aid = %aid, account_id = %account_id, "Entity registered via DauthZ");
+                        Ok(AuthResult::Registered { aid, account_id })
+                    }
                     Ok(dauthz_core::verification::VerificationResult::Authenticated {
                         aid,
                         account_id,
                         session_token,
                     }) => {
-                        let expires_at =
-                            (Utc::now() + chrono::Duration::hours(1)).to_rfc3339();
+                        let expires_at = (Utc::now() + chrono::Duration::hours(1)).to_rfc3339();
                         let session = Session {
                             token: session_token,
                             account_id,
                             aid,
                             expires_at,
                         };
+                        debug!(aid = %session.aid, token = %session.token, "Saving session");
                         self.session_store.save(&session);
+                        info!(aid = %session.aid, "Entity authenticated successfully");
                         Ok(AuthResult::Authenticated { session })
                     }
                     Ok(dauthz_core::verification::VerificationResult::Invalid(reason)) => {
+                        warn!(nonce = %nonce, reason = %reason, "Authentication response invalid");
                         Ok(AuthResult::Invalid(reason))
                     }
-                    Err(e) => Err(MessageboxError::AuthError(e.to_string())),
+                    Err(e) => {
+                        warn!(nonce = %nonce, error = %e, "Failed to handle auth response");
+                        Err(MessageboxError::AuthError(e.to_string()))
+                    }
                 };
                 let _ = sender.send(result);
             }
             AuthMessage::ValidateSession { token, sender } => {
                 let session = self.session_store.validate(&token);
+                match &session {
+                    Some(s) => {
+                        debug!(aid = %s.aid, token = %token, "Session validated successfully")
+                    }
+                    None => debug!(token = %token, "Session validation failed or expired"),
+                }
                 let _ = sender.send(session);
             }
             AuthMessage::RevokeSession { token, sender } => {
                 let revoked = self.session_store.revoke(&token);
+                if revoked {
+                    debug!(token = %token, "Session revoked successfully");
+                } else {
+                    warn!(token = %token, "Failed to revoke session (not found)");
+                }
                 let _ = sender.send(revoked);
             }
         }
@@ -230,6 +248,7 @@ impl AuthHandle {
         signer: Arc<Signer>,
         identifier: BasicPrefix,
     ) -> Result<Self, MessageboxError> {
+        debug!(dauthz_state_dir = %dauthz_state_dir.display(), service_aid = %service_aid, "Initializing DauthZ auth service");
         let dauthz = DauthzService::new(dauthz_state_dir, service_aid, service_oobi)
             .map_err(|e| MessageboxError::AuthError(e.to_string()))?;
         let session_store = SessionStore::new(db);
@@ -237,6 +256,7 @@ impl AuthHandle {
         let (sender, receiver) = mpsc::channel(8);
         let actor = AuthActor::new(receiver, dauthz, session_store, signer, identifier);
         tokio::spawn(run_auth_actor(actor));
+        info!("DauthZ auth service initialized successfully");
 
         Ok(Self { sender })
     }

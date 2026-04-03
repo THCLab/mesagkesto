@@ -3,11 +3,12 @@ pub mod test {
     use std::{path::Path, sync::Arc, time::Duration};
 
     use keri_controller::{
-        controller::Controller,
-        config::ControllerConfig, identifier::Identifier, BasicPrefix, CryptoBox,
-        KeyManager, LocationScheme, SelfSigningPrefix,
+        config::ControllerConfig, controller::Controller, identifier::Identifier, BasicPrefix,
+        CryptoBox, KeyManager, LocationScheme, SelfSigningPrefix,
     };
-    use messagebox::{db::Db, forward_message, messagebox::MessageBox, query_by_sn, MessageboxError};
+    use messagebox::{
+        db::Db, forward_message, messagebox::MessageBox, query_by_sn, MessageboxError,
+    };
     use serde_json::json;
     use tempfile::Builder;
     use tokio::time::sleep;
@@ -38,8 +39,7 @@ pub mod test {
             let signature =
                 SelfSigningPrefix::Ed25519Sha512(km.sign(icp_event.as_bytes()).unwrap());
 
-            cont
-                .finalize_incept(icp_event.as_bytes(), &signature)
+            cont.finalize_incept(icp_event.as_bytes(), &signature)
                 .unwrap()
         };
 
@@ -90,7 +90,6 @@ pub mod test {
 
     #[actix_web::test]
     async fn test_response_not_ready() {
-
         if std::env::var("RUN_NETWORK_TESTS").is_err() {
             return;
         }

@@ -1,10 +1,11 @@
 use std::path::Path;
 
-use keri_core::oobi_manager::OobiManager;
 use keri_core::database::redb::RedbDatabase;
+use keri_core::oobi_manager::OobiManager;
 use keri_core::query::reply_event::{ReplyEvent, SignedReply};
 use keri_core::{oobi::Role, prefix::IdentifierPrefix};
 use tokio::sync::{mpsc, oneshot};
+use tracing::{debug, info, warn};
 
 pub enum OobiMessage {
     GetLocation {
@@ -34,13 +35,12 @@ pub struct OobiActor {
 
 impl OobiActor {
     fn new(receiver: mpsc::Receiver<OobiMessage>, oobi_db_path: &Path) -> Self {
+        debug!(oobi_db_path = %oobi_db_path.display(), "Initializing OOBI actor");
         OobiActor {
             receiver,
-            oobi_manager: OobiManager::new(
-                std::sync::Arc::new(
-                    RedbDatabase::new(&oobi_db_path.join("oobi_db")).unwrap(),
-                ),
-            ),
+            oobi_manager: OobiManager::new(std::sync::Arc::new(
+                RedbDatabase::new(&oobi_db_path.join("oobi_db")).unwrap(),
+            )),
         }
     }
     fn handle_message(&mut self, msg: OobiMessage) {
@@ -49,10 +49,17 @@ impl OobiActor {
                 endpoint_identifier,
                 sender,
             } => {
+                debug!(endpoint_id = %endpoint_identifier, "Getting location scheme");
                 let loc_scheme = self
                     .oobi_manager
                     .get_loc_scheme(&endpoint_identifier)
                     .unwrap_or_default();
+                match loc_scheme.is_empty() {
+                    false => {
+                        debug!(endpoint_id = %endpoint_identifier, count = loc_scheme.len(), "Location schemes found")
+                    }
+                    true => debug!(endpoint_id = %endpoint_identifier, "No location schemes found"),
+                }
                 let _ = sender.send(loc_scheme);
             }
             OobiMessage::GetRole {
@@ -61,17 +68,38 @@ impl OobiActor {
                 endpoint_identifier: _,
                 sender,
             } => {
+                debug!(cid = %controller_identifier, role = ?role, "Getting end role OOBI");
+                let role_clone = role.clone();
                 let end_role = self
                     .oobi_manager
-                    .get_end_role(&controller_identifier, role)
+                    .get_end_role(&controller_identifier, role_clone)
                     .unwrap()
                     .unwrap_or_default();
+                match end_role.is_empty() {
+                    false => {
+                        debug!(cid = ?controller_identifier, role = ?role, count = end_role.len(), "End role OOBIs found")
+                    }
+                    true => {
+                        debug!(cid = ?controller_identifier, role = ?role, "No end role OOBIs found")
+                    }
+                }
                 let _ = sender.send(end_role);
             }
             OobiMessage::RegisterOobi { oobis, sender } => {
+                let oobis_count = oobis.len();
+                debug!(oobi_count = oobis_count, "Registering OOBIs");
+                let mut success_count = 0;
                 for reply in oobis {
-                    self.oobi_manager.process_oobi(&reply).unwrap();
+                    match self.oobi_manager.process_oobi(&reply) {
+                        Ok(_) => success_count += 1,
+                        Err(e) => warn!(error = %e, "Failed to process OOBI"),
+                    }
                 }
+                info!(
+                    registered = success_count,
+                    total = oobis_count,
+                    "OOBI registration complete"
+                );
                 let _ = sender.send(1);
             }
         }
@@ -94,6 +122,7 @@ impl OobiHandle {
         let (sender, receiver) = mpsc::channel(8);
         let actor = OobiActor::new(receiver, db_path);
         tokio::spawn(run_my_actor(actor));
+        debug!("OOBI handle initialized");
 
         Self {
             oobi_sender: sender,
@@ -101,6 +130,7 @@ impl OobiHandle {
     }
 
     pub async fn register(&self, replys: Vec<SignedReply>) -> u32 {
+        debug!(oobi_count = replys.len(), "Registering OOBIs");
         let (send, recv) = oneshot::channel();
 
         let msg = OobiMessage::RegisterOobi {
@@ -115,6 +145,7 @@ impl OobiHandle {
     }
 
     pub async fn get_location(&self, id: IdentifierPrefix) -> Option<Vec<ReplyEvent>> {
+        debug!(id = %id, "Getting location scheme");
         let (send, recv) = oneshot::channel();
         let msg = OobiMessage::GetLocation {
             endpoint_identifier: id,
@@ -134,6 +165,7 @@ impl OobiHandle {
         role: Role,
         endpoint_identifier: IdentifierPrefix,
     ) -> Option<Vec<SignedReply>> {
+        debug!(cid = %controller_identifier, role = ?role, eid = %endpoint_identifier, "Getting end role OOBI");
         let (sender, recv) = oneshot::channel();
         let msg = OobiMessage::GetRole {
             controller_identifier,

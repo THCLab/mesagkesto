@@ -1,17 +1,15 @@
 use keri_controller::{
-    controller::Controller,
-    config::ControllerConfig, BasicPrefix, CryptoBox, IdentifierPrefix, KeyManager,
-    LocationScheme, Oobi, SelfSigningPrefix,
+    config::ControllerConfig, controller::Controller, BasicPrefix, CryptoBox, IdentifierPrefix,
+    KeyManager, LocationScheme, Oobi, SelfSigningPrefix,
 };
 use keri_core::actor::event_generator;
-use keri_core::oobi::Role;
 use keri_core::error::Error;
+use keri_core::oobi::Role;
 use std::sync::Arc;
 use tempfile::Builder;
 
 #[actix_web::test]
 async fn test_messagebox_location() -> Result<(), Error> {
-
     if std::env::var("RUN_NETWORK_TESTS").is_err() {
         return Ok(());
     }
@@ -42,7 +40,7 @@ async fn test_messagebox_location() -> Result<(), Error> {
             .unwrap()
     };
 
-        let message_box_id: IdentifierPrefix = "BFY1nGjV9oApBzo5Oq5JqjwQsZEQqsCCftzo3WJjMMX-"
+    let message_box_id: IdentifierPrefix = "BFY1nGjV9oApBzo5Oq5JqjwQsZEQqsCCftzo3WJjMMX-"
         .parse()
         .unwrap();
     let message_box_oobi: LocationScheme = serde_json::from_str(&format!(
@@ -82,7 +80,8 @@ async fn test_messagebox_location() -> Result<(), Error> {
         .await
         .unwrap();
 
-    let saved_messagebox_location = identifier1.get_role_location(identifier1.id(), Role::Messagebox);
+    let saved_messagebox_location =
+        identifier1.get_role_location(identifier1.id(), Role::Messagebox);
     assert_eq!(saved_messagebox_location.unwrap()[0], message_box_oobi);
 
     // Setup second identifier.

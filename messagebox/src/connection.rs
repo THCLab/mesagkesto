@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use actix::prelude::*;
 use serde::{Deserialize, Serialize};
+use tracing::{debug, info};
 
 /// Presence state for an AID
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -78,6 +79,7 @@ pub struct ConnectionManager {
 
 impl ConnectionManager {
     pub fn new() -> Self {
+        debug!("Connection manager initialized");
         Self {
             sessions: HashMap::new(),
             presence: HashMap::new(),
@@ -86,6 +88,7 @@ impl ConnectionManager {
     }
 
     fn broadcast_presence(&self, aid: &str, state: &PresenceState) {
+        debug!(aid = %aid, state = ?state, "Broadcasting presence update");
         let msg = serde_json::json!({
             "type": "presence",
             "aid": aid,
@@ -96,6 +99,7 @@ impl ConnectionManager {
         let hidden = self.presence_hidden.get(aid);
 
         // Send presence update to all other connected AIDs
+        let mut notified_count = 0;
         for (other_aid, sessions) in &self.sessions {
             if other_aid == aid {
                 continue;
@@ -103,13 +107,16 @@ impl ConnectionManager {
             // Check if this AID is hidden from the other
             if let Some(hidden_list) = hidden {
                 if hidden_list.contains(other_aid) {
+                    debug!(aid = %aid, other_aid = %other_aid, "Presence hidden from this AID");
                     continue;
                 }
             }
             for addr in sessions {
                 let _ = addr.do_send(WsMessage(msg.clone()));
+                notified_count += 1;
             }
         }
+        debug!(aid = %aid, state = ?state, notified_count = notified_count, "Presence broadcast complete");
     }
 }
 
@@ -122,16 +129,23 @@ impl Handler<Connect> for ConnectionManager {
 
     fn handle(&mut self, msg: Connect, _ctx: &mut Self::Context) {
         let was_offline = !self.sessions.contains_key(&msg.aid)
-            || self.sessions.get(&msg.aid).map(|s| s.is_empty()).unwrap_or(true);
+            || self
+                .sessions
+                .get(&msg.aid)
+                .map(|s| s.is_empty())
+                .unwrap_or(true);
 
         self.sessions
             .entry(msg.aid.clone())
             .or_default()
             .push(msg.addr);
 
+        let session_count = self.sessions.get(&msg.aid).map(|s| s.len()).unwrap_or(0);
+        debug!(aid = %msg.aid, session_count = session_count, "WebSocket session connected");
+
         if was_offline {
-            self.presence
-                .insert(msg.aid.clone(), PresenceState::Online);
+            self.presence.insert(msg.aid.clone(), PresenceState::Online);
+            info!(aid = %msg.aid, "AID came online");
             self.broadcast_presence(&msg.aid, &PresenceState::Online);
         }
     }
@@ -141,12 +155,16 @@ impl Handler<Disconnect> for ConnectionManager {
     type Result = ();
 
     fn handle(&mut self, msg: Disconnect, _ctx: &mut Self::Context) {
+        debug!(aid = %msg.aid, "WebSocket session disconnecting");
         if let Some(sessions) = self.sessions.get_mut(&msg.aid) {
             sessions.retain(|addr| addr != &msg.addr);
+            let remaining_count = sessions.len();
+            debug!(aid = %msg.aid, remaining_sessions = remaining_count, "Sessions after disconnect");
             if sessions.is_empty() {
                 self.sessions.remove(&msg.aid);
                 self.presence
                     .insert(msg.aid.clone(), PresenceState::Offline);
+                info!(aid = %msg.aid, "AID went offline");
                 self.broadcast_presence(&msg.aid, &PresenceState::Offline);
             }
         }
@@ -157,15 +175,19 @@ impl Handler<RelayMessage> for ConnectionManager {
     type Result = bool;
 
     fn handle(&mut self, msg: RelayMessage, _ctx: &mut Self::Context) -> bool {
+        debug!(to_aid = %msg.to_aid, msg_len = msg.text.len(), "Relaying message to AID");
         if let Some(sessions) = self.sessions.get(&msg.to_aid) {
             if sessions.is_empty() {
+                debug!(to_aid = %msg.to_aid, "No active sessions for AID");
                 return false;
             }
             for addr in sessions {
                 let _ = addr.do_send(WsMessage(msg.text.clone()));
             }
+            info!(to_aid = %msg.to_aid, session_count = sessions.len(), "Message relayed to AID");
             true
         } else {
+            debug!(to_aid = %msg.to_aid, "No sessions found for AID");
             false
         }
     }
@@ -193,10 +215,14 @@ impl Handler<RelayEphemeral> for ConnectionManager {
     type Result = ();
 
     fn handle(&mut self, msg: RelayEphemeral, _ctx: &mut Self::Context) {
+        debug!(to_aid = %msg.to_aid, data_len = msg.text.len(), "Relaying ephemeral data to AID");
         if let Some(sessions) = self.sessions.get(&msg.to_aid) {
             for addr in sessions {
                 let _ = addr.do_send(WsMessage(msg.text.clone()));
             }
+            debug!(to_aid = %msg.to_aid, session_count = sessions.len(), "Ephemeral data relayed");
+        } else {
+            debug!(to_aid = %msg.to_aid, "No sessions found for ephemeral data relay");
         }
     }
 }
@@ -205,6 +231,10 @@ impl Handler<SetPresenceConfig> for ConnectionManager {
     type Result = ();
 
     fn handle(&mut self, msg: SetPresenceConfig, _ctx: &mut Self::Context) {
+        let aid = msg.aid.clone();
+        let hidden_count = msg.hidden_from.len();
+        debug!(aid = %aid, hidden_count = hidden_count, "Updating presence config");
         self.presence_hidden.insert(msg.aid, msg.hidden_from);
+        info!(aid = %aid, hidden_count = hidden_count, "Presence config updated");
     }
 }
