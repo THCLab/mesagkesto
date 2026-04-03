@@ -103,8 +103,8 @@ Enabled when `dauthz_state_dir` is configured.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET /auth/challenge?purpose=registration\|identification` | Request DauthZ challenge |
-| `POST /auth/respond` | Submit signed challenge response |
+| `GET /auth/challenge?oobi=...&purpose=...` | Request signed DauthZ challenge bound to OOBI |
+| `POST /auth/respond` | Submit CESR-signed nonce to complete authentication |
 | `DELETE /auth/session` | Revoke session (requires `Authorization: Bearer <token>`) |
 
 ### Mailbox Endpoints
@@ -126,13 +126,16 @@ Requires authentication (`Authorization: Bearer <token>`).
 
 ### Authentication Flow
 
-1. Client requests challenge: `GET /auth/challenge?purpose=registration`
-2. Server returns a `Challenge` JSON with nonce, service AID, expiry
-3. Client signs the challenge with their KERI keys
-4. Client submits: `POST /auth/respond` with `ChallengeResponse` (entity_aid, entity_oobi, nonce, signed_challenge)
-5. On **registration**: server provisions a mailbox, returns account info
-6. On **identification**: server issues a `SessionToken` (1hr expiry)
-7. Use the token for authenticated endpoints: `Authorization: Bearer <token>`
+1. Client requests challenge: `GET /auth/challenge?oobi=<OOBI_JSON>&purpose=registration`
+2. Server parses the OOBI to extract the AID, resolves it (caches the client's KEL)
+3. Server returns a CESR stream: challenge JSON payload + nontransferable receipt couples (service signature)
+4. Client **parses the CESR stream** and verifies the attached signature against the `service_aid` to confirm the challenge is authentic
+5. Client signs `{"nonce": "<nonce>"}` with their KERI keys (CESR envelope)
+6. Client submits: `POST /auth/respond` with the CESR-signed nonce as raw body
+7. Server verifies the CESR signature against the client's KEL (already resolved), looks up the bound AID
+8. On **registration**: server provisions a mailbox, returns account info
+9. On **identification**: server issues a `SessionToken` (1hr expiry)
+10. Use the token for authenticated endpoints: `Authorization: Bearer <token>`
 
 ### Session Lifecycle
 

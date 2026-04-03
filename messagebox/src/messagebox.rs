@@ -84,7 +84,14 @@ impl MessageBox {
         let auth_handle = if let Some(auth_dir) = dauthz_state_dir {
             let service_aid = IdentifierPrefix::Basic(id.clone()).to_string();
             let service_oobi = address.to_string();
-            Some(AuthHandle::new(auth_dir, &service_aid, &service_oobi, db.clone())?)
+            Some(AuthHandle::new(
+                auth_dir,
+                &service_aid,
+                &service_oobi,
+                db.clone(),
+                signer.clone(),
+                id.clone(),
+            )?)
         } else {
             None
         };
@@ -129,6 +136,23 @@ impl MessageBox {
 
     pub async fn resolve_oobi(&self, oobi: String) -> Result<(), MessageboxError> {
         self.verify_handle.resolve_oobi(oobi).await
+    }
+
+    /// Resolve an OOBI that may be a single object or a JSON array of OOBIs.
+    /// Each entry in the array is resolved individually.
+    pub async fn resolve_oobi_multi(&self, oobi_str: &str) -> Result<(), MessageboxError> {
+        // Try parsing as array first
+        if let Ok(oobis) = serde_json::from_str::<Vec<serde_json::Value>>(oobi_str) {
+            for oobi_val in oobis {
+                let single = serde_json::to_string(&oobi_val)
+                    .map_err(|e| MessageboxError::Unparsable(e.to_string()))?;
+                self.verify_handle.resolve_oobi(single).await?;
+            }
+            Ok(())
+        } else {
+            // Single OOBI object
+            self.verify_handle.resolve_oobi(oobi_str.to_string()).await
+        }
     }
 
     pub fn oobi(&self) -> LocationScheme {

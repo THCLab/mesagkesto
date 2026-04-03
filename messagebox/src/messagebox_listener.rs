@@ -223,7 +223,7 @@ mod http_handlers {
     ) -> Result<HttpResponse, ApiError> {
         let oobi_str = String::from_utf8(body.to_vec()).map_err(|_e| ApiError::Unparsable)?;
         debug!(oobi = %oobi_str, "POST /resolve");
-        data.resolve_oobi(oobi_str).await?;
+        data.resolve_oobi_multi(&oobi_str).await?;
         debug!("POST /resolve -> 200");
         Ok(HttpResponse::Ok().finish())
     }
@@ -242,8 +242,46 @@ mod http_handlers {
         Ok(HttpResponse::Ok().finish())
     }
 
+    #[derive(serde::Deserialize)]
+    pub struct ChallengeQuery {
+        purpose: Option<String>,
+        oobi: String,
+    }
+
+    /// Extract the AID from an OOBI JSON string (single object or array).
+    /// Prefers `cid` from EndRole entries (the transferable AID) over `eid`
+    /// from LocationScheme entries (which may be a witness basic prefix).
+    fn aid_from_oobi(oobi_str: &str) -> Result<String, ApiError> {
+        // Try parsing as array first (real-world OOBIs are often arrays of
+        // LocationScheme + EndRole entries)
+        if let Ok(oobis) = serde_json::from_str::<Vec<keri_core::oobi::Oobi>>(oobi_str) {
+            // Prefer cid from EndRole entries — that's the controlling identifier
+            for oobi in &oobis {
+                if let keri_core::oobi::Oobi::EndRole(er) = oobi {
+                    return Ok(er.cid.to_string());
+                }
+            }
+            // Fall back to eid from LocationScheme
+            for oobi in &oobis {
+                if let keri_core::oobi::Oobi::Location(loc) = oobi {
+                    return Ok(loc.eid.to_string());
+                }
+            }
+            Err(ApiError::MessageboxError(crate::MessageboxError::OobiParsingError))
+        } else {
+            // Single OOBI object
+            let oobi: keri_core::oobi::Oobi = serde_json::from_str(oobi_str)
+                .map_err(|_| ApiError::MessageboxError(crate::MessageboxError::OobiParsingError))?;
+            let aid = match oobi {
+                keri_core::oobi::Oobi::Location(loc) => loc.eid.to_string(),
+                keri_core::oobi::Oobi::EndRole(er) => er.cid.to_string(),
+            };
+            Ok(aid)
+        }
+    }
+
     pub async fn auth_challenge(
-        query: web::Query<std::collections::HashMap<String, String>>,
+        query: web::Query<ChallengeQuery>,
         data: web::Data<Arc<MessageBox>>,
     ) -> Result<HttpResponse, ApiError> {
         let auth = data
@@ -251,24 +289,42 @@ mod http_handlers {
             .as_ref()
             .ok_or(ApiError::AuthNotConfigured)?;
 
-        let purpose_str = query.get("purpose").map(|s| s.as_str()).unwrap_or("identification");
-        debug!(purpose = %purpose_str, "GET /auth/challenge");
+        let entity_aid = aid_from_oobi(&query.oobi)?;
+
+        let purpose_str = query.purpose.as_deref().unwrap_or("identification");
+        debug!(
+            purpose = %purpose_str,
+            entity_aid = %entity_aid,
+            entity_oobi = %query.oobi,
+            "GET /auth/challenge"
+        );
         let purpose = match purpose_str {
             "registration" => dauthz_core::CeremonyPurpose::Registration,
             _ => dauthz_core::CeremonyPurpose::Identification,
         };
 
-        let challenge = auth.create_challenge(purpose).await?;
-        debug!(nonce = %challenge.nonce, purpose = %purpose_str, "GET /auth/challenge -> 200");
-        Ok(HttpResponse::Ok().json(challenge))
+        // Resolve the entity's OOBI(s) early so KEL is cached for later verification.
+        // Handles both single OOBI objects and arrays (LocationScheme + EndRole entries).
+        data.resolve_oobi_multi(&query.oobi).await?;
+
+        let cesr_stream = auth
+            .create_challenge(purpose, entity_aid.clone(), query.oobi.clone())
+            .await?;
+        debug!(
+            entity_aid = %entity_aid,
+            body_len = cesr_stream.len(),
+            "GET /auth/challenge -> 200"
+        );
+        Ok(HttpResponse::Ok()
+            .content_type(ContentType::plaintext())
+            .body(cesr_stream))
     }
 
-    /// Payload fields expected inside the CESR-signed JSON envelope.
+    /// Payload inside the CESR-signed envelope for auth response.
+    /// Only the nonce is needed — the server already knows the bound AID.
     #[derive(serde::Deserialize)]
     struct AuthResponsePayload {
         nonce: String,
-        entity_aid: String,
-        entity_oobi: String,
     }
 
     pub async fn auth_respond(
@@ -288,44 +344,24 @@ mod http_handlers {
                 crate::MessageboxError::Unparsable(e.to_string()),
             ))?;
 
-        // Deserialize the auth response fields from the signed payload
         let payload: AuthResponsePayload = serde_json::from_str(&payload_str)
             .map_err(|e| ApiError::MessageboxError(
                 crate::MessageboxError::Unparsable(e.to_string()),
             ))?;
 
-        debug!(
-            entity_aid = %payload.entity_aid,
-            entity_oobi = %payload.entity_oobi,
-            nonce = %payload.nonce,
-            "POST /auth/respond parsed payload, resolving OOBI"
-        );
-
-        // Resolve the entity's OOBI so we can verify their signature
-        data.resolve_oobi(payload.entity_oobi.clone()).await?;
+        debug!(nonce = %payload.nonce, "POST /auth/respond parsed nonce");
 
         // Verify the CESR signature against the sender's KEL
+        // (OOBI was already resolved during challenge creation)
         let verified = data
             .verify_handle
             .verify(&payload_str, signatures.collect())
             .await
             .is_ok();
 
-        debug!(
-            entity_aid = %payload.entity_aid,
-            verified = verified,
-            "POST /auth/respond signature verification complete"
-        );
+        debug!(nonce = %payload.nonce, verified = verified, "POST /auth/respond verification complete");
 
-        // Construct the ChallengeResponse for DauthZ from the verified payload
-        let response = dauthz_core::ChallengeResponse {
-            entity_aid: payload.entity_aid,
-            entity_oobi: payload.entity_oobi,
-            nonce: payload.nonce,
-            signed_challenge: payload_str,
-        };
-
-        match auth.handle_response(response, verified).await? {
+        match auth.handle_response(payload.nonce, verified).await? {
             AuthResult::Registered { aid, account_id } => {
                 debug!(aid = %aid, account_id = %account_id, "POST /auth/respond -> 201 registered");
                 let _ = data.mailbox_handle.provision(aid.clone()).await;
