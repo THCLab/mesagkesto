@@ -1,9 +1,12 @@
 use std::path::Path;
 
-use keri_core::database::redb::RedbDatabase;
-use keri_core::oobi_manager::OobiManager;
-use keri_core::query::reply_event::{ReplyEvent, SignedReply};
-use keri_core::{oobi::Role, prefix::IdentifierPrefix};
+use keri_sdk::IdentifierPrefix;
+use keri_sdk::keri_core::{
+    database::redb::RedbDatabase,
+    oobi::Role,
+    oobi_manager::RedbOobiManager,
+    query::reply_event::{ReplyEvent, SignedReply},
+};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, info, warn};
 
@@ -30,7 +33,7 @@ pub enum OobiMessage {
 pub struct OobiActor {
     // From where get messages
     receiver: mpsc::Receiver<OobiMessage>,
-    pub oobi_manager: OobiManager,
+    pub oobi_manager: RedbOobiManager,
 }
 
 impl OobiActor {
@@ -38,9 +41,9 @@ impl OobiActor {
         debug!(oobi_db_path = %oobi_db_path.display(), "Initializing OOBI actor");
         OobiActor {
             receiver,
-            oobi_manager: OobiManager::new(std::sync::Arc::new(
+            oobi_manager: RedbOobiManager::new(std::sync::Arc::new(
                 RedbDatabase::new(&oobi_db_path.join("oobi_db")).unwrap(),
-            )),
+            )).unwrap(),
         }
     }
     fn handle_message(&mut self, msg: OobiMessage) {

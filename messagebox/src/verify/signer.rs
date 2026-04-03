@@ -1,5 +1,5 @@
-use keri_controller::{BasicPrefix, SelfSigningPrefix};
-use keri_core::{keys::KeysError, signer::Signer};
+use keri_sdk::{BasicPrefix, SelfSigningPrefix, Signer};
+use keri_sdk::keri_core::keys::KeysError;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::MessageboxError;

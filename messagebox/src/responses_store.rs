@@ -1,4 +1,4 @@
-use keri_core::actor::prelude::SelfAddressingIdentifier;
+use keri_sdk::SelfAddressingIdentifier;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, info, warn};
 

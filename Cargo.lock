@@ -2078,9 +2078,7 @@ dependencies = [
 
 [[package]]
 name = "keri-controller"
-version = "0.17.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f5a1f432e792d595d72f573be4954edf8ffa81f120b0f85ad66717619cce6371"
+version = "0.17.13"
 dependencies = [
  "async-std",
  "async-trait",
@@ -2093,14 +2091,13 @@ dependencies = [
  "serde_json",
  "teliox",
  "thiserror",
+ "tracing",
  "url",
 ]
 
 [[package]]
 name = "keri-core"
-version = "0.17.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2eba0e8506bccf66e2e8bec7d4df749ce52394b49adcb4ff41f8e266efd30c3"
+version = "0.17.13"
 dependencies = [
  "arrayref",
  "async-trait",
@@ -2132,6 +2129,24 @@ dependencies = [
  "thiserror",
  "url",
  "zeroize",
+]
+
+[[package]]
+name = "keri-sdk"
+version = "0.1.9"
+dependencies = [
+ "base64 0.13.1",
+ "cesrox",
+ "ed25519-dalek",
+ "keri-controller",
+ "keri-core",
+ "log",
+ "rand 0.8.5",
+ "said",
+ "serde_cbor",
+ "serde_json",
+ "teliox",
+ "thiserror",
 ]
 
 [[package]]
@@ -2237,14 +2252,12 @@ dependencies = [
  "actix-web",
  "actix-web-actors",
  "anyhow",
- "cesrox",
  "chrono",
  "clap 4.5.57",
  "dauthz-core",
  "dauthz-server",
  "figment",
- "keri-controller",
- "keri-core",
+ "keri-sdk",
  "redb",
  "said",
  "serde",
@@ -3588,9 +3601,7 @@ dependencies = [
 
 [[package]]
 name = "teliox"
-version = "0.17.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1cc3e602af684b7bbc67edcf437e11a2df04aeed4bacca7523840c9b86f71c7"
+version = "0.17.13"
 dependencies = [
  "arrayref",
  "base64 0.13.1",

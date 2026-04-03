@@ -1,14 +1,14 @@
 use std::{path::Path, sync::Arc};
 
-use keri_core::actor::prelude::SelfAddressingIdentifier;
-use keri_core::{
+use keri_sdk::{
+    BasicPrefix, IdentifierPrefix, LocationScheme, SelfAddressingIdentifier, SelfSigningPrefix,
+    Signature, Signer,
+};
+use keri_sdk::keri_core::{
     actor::prelude::{HashFunctionCode, SerializationFormats},
     error::Error,
-    event_message::signature::{get_signatures, Signature},
-    oobi::LocationScheme,
-    prefix::{BasicPrefix, IdentifierPrefix, SelfSigningPrefix},
+    event_message::signature::get_signatures,
     query::reply_event::{ReplyEvent, ReplyRoute, SignedReply},
-    signer::Signer,
 };
 
 use actix::{Actor, Addr};
@@ -178,7 +178,7 @@ impl MessageBox {
     pub fn oobi(&self) -> LocationScheme {
         LocationScheme::new(
             IdentifierPrefix::Basic(self.identifier.clone()),
-            keri_core::oobi::Scheme::Http,
+            keri_sdk::keri_core::oobi::Scheme::Http,
             self.public_address.clone(),
         )
     }
@@ -214,11 +214,11 @@ impl MessageBox {
         input: &[u8],
     ) -> Result<(Vec<u8>, impl Iterator<Item = Signature>), MessageboxError> {
         let (_rest, parsed_data) =
-            cesrox::parse(input).map_err(|e| MessageboxError::Unparsable(e.to_string()))?;
+            keri_sdk::cesrox::parse(input).map_err(|e| MessageboxError::Unparsable(e.to_string()))?;
         let data = match parsed_data.payload {
-            cesrox::payload::Payload::JSON(json) => json,
-            cesrox::payload::Payload::CBOR(_) => todo!(),
-            cesrox::payload::Payload::MGPK(_) => todo!(),
+            keri_sdk::cesrox::payload::Payload::JSON(json) => json,
+            keri_sdk::cesrox::payload::Payload::CBOR(_) => todo!(),
+            keri_sdk::cesrox::payload::Payload::MGPK(_) => todo!(),
         };
         let signatures = parsed_data
             .attachments

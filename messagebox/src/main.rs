@@ -6,7 +6,7 @@ use figment::{
     providers::{Format, Serialized, Yaml},
     Figment,
 };
-use keri_controller::LocationScheme;
+use keri_sdk::LocationScheme;
 use messagebox::{
     db::Db, messagebox::MessageBox, messagebox_listener::MessageBoxListener, MessageboxError,
 };

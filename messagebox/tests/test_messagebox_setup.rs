@@ -1,10 +1,8 @@
-use keri_controller::{
-    config::ControllerConfig, controller::Controller, BasicPrefix, CryptoBox, IdentifierPrefix,
-    KeyManager, LocationScheme, Oobi, SelfSigningPrefix,
+use keri_sdk::{
+    BasicPrefix, IdentifierPrefix, KeyManager, LocationScheme, Oobi, SelfSigningPrefix,
 };
-use keri_core::actor::event_generator;
-use keri_core::error::Error;
-use keri_core::oobi::Role;
+use keri_sdk::keri_controller::{config::ControllerConfig, CryptoBox, RedbController};
+use keri_sdk::keri_core::{actor::event_generator, error::Error, oobi::Role};
 use std::sync::Arc;
 use tempfile::Builder;
 
@@ -16,7 +14,7 @@ async fn test_messagebox_location() -> Result<(), Error> {
     // Setup first identifier.
     let root = Builder::new().prefix("test-db").tempdir().unwrap();
     let controller1 = Arc::new(
-        Controller::new(ControllerConfig {
+        RedbController::new(ControllerConfig {
             db_path: root.path().to_owned(),
             // transport: transport.clone(),
             ..Default::default()
@@ -87,7 +85,7 @@ async fn test_messagebox_location() -> Result<(), Error> {
     // Setup second identifier.
     let root2 = Builder::new().prefix("test-db").tempdir().unwrap();
     let controller2 = Arc::new(
-        Controller::new(ControllerConfig {
+        RedbController::new(ControllerConfig {
             db_path: root2.path().to_owned(),
             // transport: transport.clone(),
             ..Default::default()

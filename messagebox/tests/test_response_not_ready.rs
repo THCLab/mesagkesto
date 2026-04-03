@@ -2,9 +2,9 @@
 pub mod test {
     use std::{path::Path, sync::Arc, time::Duration};
 
-    use keri_controller::{
-        config::ControllerConfig, controller::Controller, identifier::Identifier, BasicPrefix,
-        CryptoBox, KeyManager, LocationScheme, SelfSigningPrefix,
+    use keri_sdk::{BasicPrefix, KeyManager, LocationScheme, SelfSigningPrefix};
+    use keri_sdk::keri_controller::{
+        config::ControllerConfig, CryptoBox, RedbController, RedbIdentifier,
     };
     use messagebox::{
         db::Db, forward_message, messagebox::MessageBox, query_by_sn, MessageboxError,
@@ -13,13 +13,13 @@ pub mod test {
     use tempfile::Builder;
     use tokio::time::sleep;
 
-    async fn setup_identifier(km: &CryptoBox, db_path: &Path) -> Identifier {
+    async fn setup_identifier(km: &CryptoBox, db_path: &Path) -> RedbIdentifier {
         // Setup signer
         let config = ControllerConfig {
             db_path: db_path.into(),
             ..Default::default()
         };
-        let cont = Arc::new(Controller::new(config).unwrap());
+        let cont = Arc::new(RedbController::new(config).unwrap());
         let witness_oobi_st = r#"{"eid":"BJq7UABlttINuWJh1Xl2lkqZG4NTdUdqnbFJDa6ZyxCC","scheme":"http","url":"http://witness1.sandbox.argo.colossi.network/"}"#;
         // let witness_oobi_st = r#"{"eid":"BJq7UABlttINuWJh1Xl2lkqZG4NTdUdqnbFJDa6ZyxCC","scheme":"http","url":"http://localhost:3232/"}"#;
         let witness_oobi: LocationScheme = serde_json::from_str(witness_oobi_st).unwrap();
@@ -62,7 +62,7 @@ pub mod test {
         signing_identifier
     }
 
-    async fn update_identifier(id: &mut Identifier, km: &CryptoBox, witness_id: BasicPrefix) {
+    async fn update_identifier(id: &mut RedbIdentifier, km: &CryptoBox, witness_id: BasicPrefix) {
         let pk = BasicPrefix::Ed25519(km.public_key());
         let npk = BasicPrefix::Ed25519(km.next_public_key());
 

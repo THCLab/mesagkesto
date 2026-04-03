@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
-use keri_controller::IdentifierPrefix;
-use keri_core::event_message::signature::Signature;
+use keri_sdk::{IdentifierPrefix, Signature};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, warn};
 

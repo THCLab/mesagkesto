@@ -1,4 +1,4 @@
-use keri_core::actor::prelude::{HashFunction, HashFunctionCode};
+use keri_sdk::keri_core::actor::prelude::{HashFunction, HashFunctionCode};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, info, warn};
@@ -133,7 +133,7 @@ impl ValidateActor {
                     Ok(to_save) => {
                         if let Some(response) = to_save {
                             debug!(response_len = response.len(), "Saving async query response");
-                            let digest: keri_core::actor::prelude::SelfAddressingIdentifier =
+                            let digest: keri_sdk::SelfAddressingIdentifier =
                                 HashFunction::from(HashFunctionCode::Blake3_256)
                                     .derive(message.as_bytes());
                             self.responses_handle.save(response, digest).await;

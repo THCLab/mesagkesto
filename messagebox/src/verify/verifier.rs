@@ -1,20 +1,19 @@
 use std::{collections::HashMap, path::Path, sync::Arc, time::Duration};
 
-use keri_controller::{
+use keri_sdk::{
+    BasicPrefix, EndRole, IdentifierPrefix, LocationScheme, Oobi, QueryResponse, Signature,
+    WatcherResponseError,
+};
+use keri_sdk::keri_controller::{
     communication::SendingError,
     config::ControllerConfig,
-    controller::Controller,
     error::ControllerError,
-    identifier::{
-        query::{QueryResponse, WatcherResponseError},
-        Identifier,
-    },
-    BasicPrefix, EndRole, IdentifierPrefix, LocationScheme, Oobi,
+    RedbController, RedbIdentifier,
 };
-use keri_core::actor::prelude::{HashFunction, HashFunctionCode};
-use keri_core::{
+use keri_sdk::keri_core::{
+    actor::prelude::{HashFunction, HashFunctionCode},
     database::redb::RedbDatabase,
-    event_message::signature::{Nontransferable, Signature},
+    event_message::signature::Nontransferable,
     oobi::Role,
     processor::event_storage::EventStorage,
     transport::TransportError,
@@ -36,7 +35,7 @@ use super::{
 };
 
 pub(crate) struct VerifyData {
-    controller: Identifier,
+    controller: RedbIdentifier,
     signer: SignerHandle,
     witnesses: Arc<Mutex<HashMap<IdentifierPrefix, Vec<BasicPrefix>>>>,
     reverify: ReverifyHandle,
@@ -61,13 +60,13 @@ impl VerifyData {
         let identifier = signer.public_key().await?;
         debug!(identifier = ?identifier, "Verifier identifier obtained");
 
-        let controller = Arc::new(Controller::new(ControllerConfig {
+        let controller = Arc::new(RedbController::new(ControllerConfig {
             db_path: db_path.into(),
             ..Default::default()
         })?);
         let oobi = Oobi::Location(watcher_oobi.clone());
 
-        let id = Identifier::new(
+        let id = RedbIdentifier::new(
             IdentifierPrefix::Basic(identifier.clone()),
             None,
             controller.known_events.clone(),
@@ -107,7 +106,7 @@ impl VerifyData {
         match s {
             Signature::Transferable(sigd, sigs) => {
                 let (kc, id, event_sai) = match sigd {
-                    keri_core::event_message::signature::SignerData::EventSeal(es) => {
+                    keri_sdk::keri_core::event_message::signature::SignerData::EventSeal(es) => {
                         if let Ok(r) =
                             storage.get_keys_at_event(&es.prefix, es.sn, &es.event_digest())
                         {
@@ -116,10 +115,10 @@ impl VerifyData {
                             (None, es.prefix.clone(), Some(es.event_digest()))
                         }
                     }
-                    keri_core::event_message::signature::SignerData::LastEstablishment(id) => {
+                    keri_sdk::keri_core::event_message::signature::SignerData::LastEstablishment(id) => {
                         (storage.get_state(id).map(|e| e.current), id.clone(), None)
                     }
-                    keri_core::event_message::signature::SignerData::JustSignatures => todo!(),
+                    keri_sdk::keri_core::event_message::signature::SignerData::JustSignatures => todo!(),
                 };
                 if let Some(k) = kc {
                     Ok(k.verify(data, sigs).unwrap())
@@ -258,7 +257,7 @@ impl VerifyData {
                             .await;
                     }
 
-                    let digest: keri_core::actor::prelude::SelfAddressingIdentifier =
+                    let digest: keri_sdk::SelfAddressingIdentifier =
                         HashFunction::from(HashFunctionCode::Blake3_256).derive(message.as_bytes());
                     warn!(id = %id, digest = %digest, "Response not ready, waiting for KEL update");
                     Err(MessageboxError::ResponseNotReady(digest))

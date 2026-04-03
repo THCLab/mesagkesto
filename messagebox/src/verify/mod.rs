@@ -5,8 +5,7 @@ mod verifier;
 
 use std::{path::Path, sync::Arc};
 
-use keri_controller::LocationScheme;
-use keri_core::event_message::signature::Signature;
+use keri_sdk::{LocationScheme, Signature};
 use tokio::sync::{
     mpsc::{self},
     oneshot,
@@ -140,10 +139,8 @@ impl VerifyHandle {
 pub mod test {
     use std::{sync::Arc, time::Duration};
 
-    use keri_controller::{
-        config::ControllerConfig, controller::Controller, BasicPrefix, KeyManager, LocationScheme,
-        SelfSigningPrefix,
-    };
+    use keri_sdk::{BasicPrefix, KeyManager, LocationScheme, SelfSigningPrefix};
+    use keri_sdk::keri_controller::{config::ControllerConfig, RedbController};
     use serde_json::json;
     use tempfile::Builder;
     use tokio::time::sleep;
@@ -158,10 +155,10 @@ pub mod test {
         if std::env::var("RUN_NETWORK_TESTS").is_err() {
             return Ok(());
         }
-        use keri_core::signer::CryptoBox;
+        use keri_sdk::keri_core::signer::CryptoBox;
         let root = Builder::new().prefix("test-db").tempdir().unwrap();
         let cont = Arc::new(
-            Controller::new(ControllerConfig {
+            RedbController::new(ControllerConfig {
                 db_path: root.path().into(),
                 ..ControllerConfig::default()
             })

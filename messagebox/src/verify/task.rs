@@ -1,5 +1,4 @@
-use keri_controller::IdentifierPrefix;
-use keri_core::event_message::signature::Signature;
+use keri_sdk::{IdentifierPrefix, Signature};
 use tokio::sync::oneshot::Sender;
 
 use crate::MessageboxError;

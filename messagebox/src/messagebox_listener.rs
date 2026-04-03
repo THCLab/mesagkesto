@@ -3,9 +3,8 @@ use actix_web::{
     dev::Server, http::StatusCode, web::Data, App, HttpResponse, HttpServer, ResponseError,
 };
 use anyhow::Result;
-use keri_controller::IdentifierPrefix;
-use keri_core::actor::prelude::SelfAddressingIdentifier;
-use keri_core::{event_message::cesr_adapter::ParseError, oobi::Role};
+use keri_sdk::{IdentifierPrefix, SelfAddressingIdentifier};
+use keri_sdk::keri_core::{event_message::cesr_adapter::ParseError, oobi::Role};
 use std::{net::ToSocketAddrs, sync::Arc};
 use tracing_actix_web::TracingLogger;
 
@@ -88,12 +87,11 @@ mod http_handlers {
 
     use crate::{messagebox::MessageBox, MessageboxError};
     use actix_web::{http::header::ContentType, web, HttpResponse};
-    use keri_core::actor::prelude::SelfAddressingIdentifier;
-    use keri_core::{
+    use keri_sdk::{IdentifierPrefix, Oobi, SelfAddressingIdentifier};
+    use keri_sdk::keri_core::{
         actor::parse_reply_stream,
         event_message::signed_event_message::{Message, Op},
         oobi::Role,
-        prefix::IdentifierPrefix,
         query::reply_event::SignedReply,
     };
     use tracing::{debug, warn};
@@ -251,16 +249,16 @@ mod http_handlers {
     fn aid_from_oobi(oobi_str: &str) -> Result<String, ApiError> {
         // Try parsing as array first (real-world OOBIs are often arrays of
         // LocationScheme + EndRole entries)
-        if let Ok(oobis) = serde_json::from_str::<Vec<keri_core::oobi::Oobi>>(oobi_str) {
+        if let Ok(oobis) = serde_json::from_str::<Vec<Oobi>>(oobi_str) {
             // Prefer cid from EndRole entries — that's the controlling identifier
             for oobi in &oobis {
-                if let keri_core::oobi::Oobi::EndRole(er) = oobi {
+                if let Oobi::EndRole(er) = oobi {
                     return Ok(er.cid.to_string());
                 }
             }
             // Fall back to eid from LocationScheme
             for oobi in &oobis {
-                if let keri_core::oobi::Oobi::Location(loc) = oobi {
+                if let Oobi::Location(loc) = oobi {
                     return Ok(loc.eid.to_string());
                 }
             }
@@ -269,11 +267,11 @@ mod http_handlers {
             ))
         } else {
             // Single OOBI object
-            let oobi: keri_core::oobi::Oobi = serde_json::from_str(oobi_str)
+            let oobi: Oobi = serde_json::from_str(oobi_str)
                 .map_err(|_| ApiError::MessageboxError(crate::MessageboxError::OobiParsingError))?;
             let aid = match oobi {
-                keri_core::oobi::Oobi::Location(loc) => loc.eid.to_string(),
-                keri_core::oobi::Oobi::EndRole(er) => er.cid.to_string(),
+                Oobi::Location(loc) => loc.eid.to_string(),
+                Oobi::EndRole(er) => er.cid.to_string(),
             };
             Ok(aid)
         }
@@ -562,7 +560,7 @@ mod http_handlers {
 #[derive(thiserror::Error, Debug)]
 pub enum ApiError {
     #[error(transparent)]
-    KeriError(#[from] keri_core::error::Error),
+    KeriError(#[from] keri_sdk::keri_core::error::Error),
     #[error(transparent)]
     ParseError(#[from] ParseError),
     #[error(transparent)]
