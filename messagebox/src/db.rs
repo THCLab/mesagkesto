@@ -49,6 +49,20 @@ const BROADCAST_INDEX: TableDefinition<(&str, &str), &str> =
 const CHANNEL_INVITES: TableDefinition<(&str, &str), &str> =
     TableDefinition::new("channel_invites");
 
+// --- Formal Mail tables ---
+
+/// Table: (recipient_aid, seq_no) -> mail_envelope_json
+const MAIL_MESSAGES: TableDefinition<(&str, u64), &str> = TableDefinition::new("mail_messages");
+
+/// Table: recipient_aid -> next_seq_no (counter)
+const MAIL_SEQUENCES: TableDefinition<&str, u64> = TableDefinition::new("mail_sequences");
+
+/// Table: (sender_aid, message_id) -> receipt_json
+const MAIL_RECEIPTS: TableDefinition<(&str, &str), &str> = TableDefinition::new("mail_receipts");
+
+/// Table: said (content hash) -> blob (bytes)
+const VAULT_BLOBS: TableDefinition<&str, &[u8]> = TableDefinition::new("vault_blobs");
+
 #[derive(Debug)]
 pub struct DbError(Box<dyn std::error::Error + Send + Sync>);
 
@@ -118,6 +132,10 @@ impl Db {
         write_txn.open_table(CHANNEL_SEQUENCES)?;
         write_txn.open_table(BROADCAST_INDEX)?;
         write_txn.open_table(CHANNEL_INVITES)?;
+        write_txn.open_table(MAIL_MESSAGES)?;
+        write_txn.open_table(MAIL_SEQUENCES)?;
+        write_txn.open_table(MAIL_RECEIPTS)?;
+        write_txn.open_table(VAULT_BLOBS)?;
         write_txn.commit()?;
         debug!("Database tables initialized");
         Ok(())
@@ -591,5 +609,110 @@ impl Db {
         }
         write_txn.commit()?;
         Ok(())
+    }
+
+    // --- Formal Mail ---
+
+    /// Store an incoming mail envelope for a recipient. Returns the sequence number.
+    pub fn save_mail_message(&self, recipient_aid: &str, envelope_json: &str) -> Result<u64, DbError> {
+        debug!(aid = %recipient_aid, "Saving mail message");
+        let write_txn = self.inner.begin_write()?;
+        let seq;
+        {
+            // Get and increment sequence number
+            let mut seq_table = write_txn.open_table(MAIL_SEQUENCES)?;
+            let current = seq_table
+                .get(recipient_aid)?
+                .map(|v| v.value())
+                .unwrap_or(0);
+            seq = current;
+            seq_table.insert(recipient_aid, current + 1)?;
+
+            // Store the envelope
+            let mut msg_table = write_txn.open_table(MAIL_MESSAGES)?;
+            msg_table.insert((recipient_aid, seq), envelope_json)?;
+        }
+        write_txn.commit()?;
+        info!(aid = %recipient_aid, seq = seq, "Mail message stored");
+        Ok(seq)
+    }
+
+    /// Retrieve pending mail messages for a recipient, starting from `from_seq`.
+    pub fn get_mail_messages(&self, recipient_aid: &str, from_seq: u64) -> Result<Vec<(u64, String)>, DbError> {
+        let read_txn = self.inner.begin_read()?;
+        let table = read_txn.open_table(MAIL_MESSAGES)?;
+        let mut results = Vec::new();
+
+        // Iterate from from_seq up to current max
+        let max_seq = {
+            let seq_table = read_txn.open_table(MAIL_SEQUENCES)?;
+            seq_table.get(recipient_aid)?.map(|v| v.value()).unwrap_or(0)
+        };
+
+        for seq in from_seq..max_seq {
+            if let Some(entry) = table.get((recipient_aid, seq))? {
+                results.push((seq, entry.value().to_string()));
+            }
+        }
+        Ok(results)
+    }
+
+    /// Delete a specific mail message (after client acknowledges receipt).
+    pub fn delete_mail_message(&self, recipient_aid: &str, seq: u64) -> Result<(), DbError> {
+        let write_txn = self.inner.begin_write()?;
+        {
+            let mut table = write_txn.open_table(MAIL_MESSAGES)?;
+            table.remove((recipient_aid, seq))?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    /// Store a mail receipt (delivery or read) for a sender to retrieve.
+    pub fn save_mail_receipt(&self, sender_aid: &str, message_id: &str, receipt_json: &str) -> Result<(), DbError> {
+        debug!(sender = %sender_aid, msg_id = %message_id, "Saving mail receipt");
+        let write_txn = self.inner.begin_write()?;
+        {
+            let mut table = write_txn.open_table(MAIL_RECEIPTS)?;
+            table.insert((sender_aid, message_id), receipt_json)?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    /// Get a mail receipt for a specific message.
+    pub fn get_mail_receipt(&self, sender_aid: &str, message_id: &str) -> Result<Option<String>, DbError> {
+        let read_txn = self.inner.begin_read()?;
+        let table = read_txn.open_table(MAIL_RECEIPTS)?;
+        Ok(table.get((sender_aid, message_id))?.map(|v| v.value().to_string()))
+    }
+
+    // --- Storage Vault ---
+
+    /// Store a content-addressed blob in the vault.
+    pub fn vault_put(&self, said: &str, data: &[u8]) -> Result<(), DbError> {
+        debug!(said = %said, size = data.len(), "Storing vault blob");
+        let write_txn = self.inner.begin_write()?;
+        {
+            let mut table = write_txn.open_table(VAULT_BLOBS)?;
+            table.insert(said, data)?;
+        }
+        write_txn.commit()?;
+        info!(said = %said, "Vault blob stored");
+        Ok(())
+    }
+
+    /// Retrieve a blob from the vault by SAID.
+    pub fn vault_get(&self, said: &str) -> Result<Option<Vec<u8>>, DbError> {
+        let read_txn = self.inner.begin_read()?;
+        let table = read_txn.open_table(VAULT_BLOBS)?;
+        Ok(table.get(said)?.map(|v| v.value().to_vec()))
+    }
+
+    /// Check if a blob exists in the vault.
+    pub fn vault_exists(&self, said: &str) -> Result<bool, DbError> {
+        let read_txn = self.inner.begin_read()?;
+        let table = read_txn.open_table(VAULT_BLOBS)?;
+        Ok(table.get(said)?.is_some())
     }
 }

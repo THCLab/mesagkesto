@@ -113,6 +113,32 @@ impl MessageBoxListener {
                     "/broadcast/{aid}/{topic}/messages",
                     actix_web::web::get().to(http_handlers::get_broadcast_messages),
                 )
+                // Formal Mail federation endpoints
+                .route(
+                    "/mail/deliver",
+                    actix_web::web::post().to(http_handlers::mail_deliver),
+                )
+                .route(
+                    "/mail/receipt",
+                    actix_web::web::post().to(http_handlers::mail_receipt),
+                )
+                .route(
+                    "/mail/messages",
+                    actix_web::web::get().to(http_handlers::mail_get_messages),
+                )
+                .route(
+                    "/mail/messages/{seq}",
+                    actix_web::web::delete().to(http_handlers::mail_delete_message),
+                )
+                // Storage Vault endpoints
+                .route(
+                    "/vault/{said}",
+                    actix_web::web::put().to(http_handlers::vault_put),
+                )
+                .route(
+                    "/vault/{said}",
+                    actix_web::web::get().to(http_handlers::vault_get),
+                )
         })
         .bind(addr)?
         .run())
@@ -990,6 +1016,291 @@ mod http_handlers {
 
         // Default deny for unknown topics
         Ok(deny())
+    }
+
+    // -----------------------------------------------------------------------
+    // Formal Mail federation endpoints
+    // -----------------------------------------------------------------------
+
+    /// POST /mail/deliver — receive a CESR-signed mail envelope from a remote mesagkesto.
+    /// This is a server-to-server federation endpoint (no Bearer auth — sender authenticates
+    /// via CESR signature in the envelope).
+    pub async fn mail_deliver(
+        body: web::Json<serde_json::Value>,
+        data: web::Data<Arc<MessageBox>>,
+    ) -> Result<HttpResponse, ApiError> {
+        debug!("POST /mail/deliver");
+
+        let envelope = body.into_inner();
+
+        // Extract and validate required fields
+        let msg_id = envelope
+            .get("id")
+            .and_then(|v| v.as_str())
+            .ok_or(ApiError::Unparsable)?;
+        let from = envelope
+            .get("from")
+            .and_then(|v| v.as_str())
+            .ok_or(ApiError::Unparsable)?;
+        let recipients = envelope
+            .get("to")
+            .and_then(|v| v.as_array())
+            .ok_or(ApiError::Unparsable)?;
+
+        // TODO: Verify CESR signature in envelope.cesr_envelope against sender's KEL
+        // For now, accept all deliveries (verification to be added in a follow-up)
+
+        // Store for each local recipient
+        let mut delivered_count = 0u32;
+        for recipient_val in recipients {
+            if let Some(recipient_aid) = recipient_val.as_str() {
+                // Check if this recipient has a mailbox on this instance
+                if data.mailbox_handle.exists(recipient_aid).await {
+                    let envelope_str = serde_json::to_string(&envelope)
+                        .map_err(|_| ApiError::Unparsable)?;
+                    data.storage_handle
+                        .save_mail_message(recipient_aid, &envelope_str)
+                        .await
+                        .map_err(|e| {
+                            ApiError::MessageboxError(MessageboxError::DbError(format!(
+                                "Failed to store mail: {}",
+                                e
+                            )))
+                        })?;
+                    delivered_count += 1;
+                }
+            }
+        }
+
+        if delivered_count == 0 {
+            debug!(from = %from, "POST /mail/deliver -> 404 (no local recipients)");
+            return Ok(HttpResponse::NotFound().json(serde_json::json!({
+                "error": "No recipients found on this instance"
+            })));
+        }
+
+        // Build delivery receipt (signed by this mesagkesto instance)
+        // TODO: CESR-sign the receipt with mesagkesto's own AID
+        let receipt = serde_json::json!({
+            "message_id": msg_id,
+            "receipt_type": "delivery",
+            "signer_aid": IdentifierPrefix::Basic(data.identifier.clone()).to_string(),
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+            "cesr_signature": "" // TODO: sign with mesagkesto AID
+        });
+
+        debug!(from = %from, delivered = delivered_count, "POST /mail/deliver -> 200");
+        Ok(HttpResponse::Ok().json(receipt))
+    }
+
+    /// POST /mail/receipt — receive a read receipt from a remote mesagkesto.
+    pub async fn mail_receipt(
+        body: web::Json<serde_json::Value>,
+        data: web::Data<Arc<MessageBox>>,
+    ) -> Result<HttpResponse, ApiError> {
+        debug!("POST /mail/receipt");
+
+        let receipt = body.into_inner();
+        let message_id = receipt
+            .get("message_id")
+            .and_then(|v| v.as_str())
+            .ok_or(ApiError::Unparsable)?;
+        let signer_aid = receipt
+            .get("signer_aid")
+            .and_then(|v| v.as_str())
+            .ok_or(ApiError::Unparsable)?;
+
+        // TODO: Verify CESR signature against signer's AID KEL
+
+        // Store the receipt — the original sender can retrieve it
+        // We need to know who the original sender was. The message_id should be enough
+        // for the sender's client to poll for receipts.
+        let receipt_str =
+            serde_json::to_string(&receipt).map_err(|_| ApiError::Unparsable)?;
+        data.storage_handle
+            .save_mail_receipt(signer_aid, message_id, &receipt_str)
+            .await
+            .map_err(|e| {
+                ApiError::MessageboxError(MessageboxError::DbError(format!(
+                    "Failed to store receipt: {}",
+                    e
+                )))
+            })?;
+
+        debug!(msg_id = %message_id, signer = %signer_aid, "POST /mail/receipt -> 200");
+        Ok(HttpResponse::Ok().finish())
+    }
+
+    /// GET /mail/messages — client polls for pending mail (authenticated).
+    #[derive(serde::Deserialize)]
+    pub struct MailMessagesQuery {
+        from_seq: Option<u64>,
+    }
+
+    pub async fn mail_get_messages(
+        req: actix_web::HttpRequest,
+        query: web::Query<MailMessagesQuery>,
+        data: web::Data<Arc<MessageBox>>,
+    ) -> Result<HttpResponse, ApiError> {
+        debug!("GET /mail/messages");
+        let auth = data
+            .auth_handle
+            .as_ref()
+            .ok_or(ApiError::AuthNotConfigured)?;
+        let token = req
+            .headers()
+            .get("Authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .ok_or(ApiError::Unauthorized)?;
+        let session = auth
+            .validate_session(token)
+            .await
+            .ok_or(ApiError::Unauthorized)?;
+
+        let from_seq = query.from_seq.unwrap_or(0);
+        let messages = data
+            .storage_handle
+            .get_mail_messages(&session.aid, from_seq)
+            .await
+            .map_err(|e| {
+                ApiError::MessageboxError(MessageboxError::DbError(format!(
+                    "Failed to get mail: {}",
+                    e
+                )))
+            })?;
+
+        debug!(
+            aid = %session.aid,
+            count = messages.len(),
+            "GET /mail/messages -> 200"
+        );
+        Ok(HttpResponse::Ok().json(messages))
+    }
+
+    /// DELETE /mail/messages/{seq} — client acknowledges receipt of a mail message.
+    pub async fn mail_delete_message(
+        req: actix_web::HttpRequest,
+        path: web::Path<u64>,
+        data: web::Data<Arc<MessageBox>>,
+    ) -> Result<HttpResponse, ApiError> {
+        let seq = path.into_inner();
+        debug!("DELETE /mail/messages/{}", seq);
+        let auth = data
+            .auth_handle
+            .as_ref()
+            .ok_or(ApiError::AuthNotConfigured)?;
+        let token = req
+            .headers()
+            .get("Authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .ok_or(ApiError::Unauthorized)?;
+        let session = auth
+            .validate_session(token)
+            .await
+            .ok_or(ApiError::Unauthorized)?;
+
+        data.storage_handle
+            .delete_mail_message(&session.aid, seq)
+            .await
+            .map_err(|e| {
+                ApiError::MessageboxError(MessageboxError::DbError(format!(
+                    "Failed to delete mail: {}",
+                    e
+                )))
+            })?;
+
+        debug!(aid = %session.aid, seq = seq, "DELETE /mail/messages/{} -> 200", seq);
+        Ok(HttpResponse::Ok().finish())
+    }
+
+    // -----------------------------------------------------------------------
+    // Storage Vault endpoints
+    // -----------------------------------------------------------------------
+
+    /// PUT /vault/{said} — upload a content-addressed blob (authenticated).
+    pub async fn vault_put(
+        req: actix_web::HttpRequest,
+        path: web::Path<String>,
+        body: web::Bytes,
+        data: web::Data<Arc<MessageBox>>,
+    ) -> Result<HttpResponse, ApiError> {
+        let said = path.into_inner();
+        debug!("PUT /vault/{}", said);
+
+        let auth = data
+            .auth_handle
+            .as_ref()
+            .ok_or(ApiError::AuthNotConfigured)?;
+        let token = req
+            .headers()
+            .get("Authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .ok_or(ApiError::Unauthorized)?;
+        let _session = auth
+            .validate_session(token)
+            .await
+            .ok_or(ApiError::Unauthorized)?;
+
+        // Verify the SAID matches the content hash
+        use sha2::{Digest, Sha256};
+        let hash = format!("{:x}", Sha256::digest(&body));
+        if hash != said {
+            return Ok(HttpResponse::BadRequest().json(serde_json::json!({
+                "error": "SAID does not match content hash",
+                "expected": said,
+                "actual": hash
+            })));
+        }
+
+        data.storage_handle
+            .vault_put(&said, &body)
+            .await
+            .map_err(|e| {
+                ApiError::MessageboxError(MessageboxError::DbError(format!(
+                    "Failed to store vault blob: {}",
+                    e
+                )))
+            })?;
+
+        debug!(said = %said, size = body.len(), "PUT /vault/{} -> 201", said);
+        Ok(HttpResponse::Created().finish())
+    }
+
+    /// GET /vault/{said} — download a blob by SAID.
+    /// Publicly accessible (content-addressed = knowing the SAID is authorization).
+    pub async fn vault_get(
+        path: web::Path<String>,
+        data: web::Data<Arc<MessageBox>>,
+    ) -> Result<HttpResponse, ApiError> {
+        let said = path.into_inner();
+        debug!("GET /vault/{}", said);
+
+        let blob = data
+            .storage_handle
+            .vault_get(&said)
+            .await
+            .map_err(|e| {
+                ApiError::MessageboxError(MessageboxError::DbError(format!(
+                    "Failed to get vault blob: {}",
+                    e
+                )))
+            })?;
+
+        match blob {
+            Some(data) => {
+                debug!(said = %said, size = data.len(), "GET /vault/{} -> 200", said);
+                Ok(HttpResponse::Ok()
+                    .content_type("application/octet-stream")
+                    .body(data))
+            }
+            None => {
+                debug!(said = %said, "GET /vault/{} -> 404", said);
+                Ok(HttpResponse::NotFound().finish())
+            }
+        }
     }
 }
 

@@ -58,6 +58,8 @@ pub enum MessageboxError {
     AuthError(String),
     #[error("ACL denied: sender {0} is not authorized to send to this mailbox")]
     AclDenied(String),
+    #[error("Database error: {0}")]
+    DbError(String),
 }
 
 pub fn register_token(id: String, token: String) -> MessageType {

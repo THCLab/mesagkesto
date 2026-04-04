@@ -41,6 +41,38 @@ pub enum StorageMessage {
         digests: Vec<String>,
         sender: oneshot::Sender<Option<String>>,
     },
+    // Mail operations
+    SaveMailMessage {
+        recipient_aid: String,
+        envelope_json: String,
+        sender: oneshot::Sender<Result<u64, String>>,
+    },
+    GetMailMessages {
+        recipient_aid: String,
+        from_seq: u64,
+        sender: oneshot::Sender<Result<Vec<serde_json::Value>, String>>,
+    },
+    DeleteMailMessage {
+        recipient_aid: String,
+        seq: u64,
+        sender: oneshot::Sender<Result<(), String>>,
+    },
+    SaveMailReceipt {
+        signer_aid: String,
+        message_id: String,
+        receipt_json: String,
+        sender: oneshot::Sender<Result<(), String>>,
+    },
+    // Vault operations
+    VaultPut {
+        said: String,
+        data: Vec<u8>,
+        sender: oneshot::Sender<Result<(), String>>,
+    },
+    VaultGet {
+        said: String,
+        sender: oneshot::Sender<Result<Option<Vec<u8>>, String>>,
+    },
 }
 
 pub struct StorageActor {
@@ -195,6 +227,74 @@ impl StorageActor {
                 };
                 let _ = sender.send(result);
             }
+            // ----- Mail -----
+            StorageMessage::SaveMailMessage {
+                recipient_aid,
+                envelope_json,
+                sender,
+            } => {
+                let result = self
+                    .db
+                    .save_mail_message(&recipient_aid, &envelope_json)
+                    .map_err(|e| e.to_string());
+                let _ = sender.send(result);
+            }
+            StorageMessage::GetMailMessages {
+                recipient_aid,
+                from_seq,
+                sender,
+            } => {
+                let result = self
+                    .db
+                    .get_mail_messages(&recipient_aid, from_seq)
+                    .map(|rows| {
+                        rows.into_iter()
+                            .filter_map(|(seq, json_str)| {
+                                serde_json::from_str::<serde_json::Value>(&json_str)
+                                    .ok()
+                                    .map(|mut v| {
+                                        v.as_object_mut()
+                                            .map(|o| o.insert("_seq".into(), json!(seq)));
+                                        v
+                                    })
+                            })
+                            .collect()
+                    })
+                    .map_err(|e| e.to_string());
+                let _ = sender.send(result);
+            }
+            StorageMessage::DeleteMailMessage {
+                recipient_aid,
+                seq,
+                sender,
+            } => {
+                let result = self
+                    .db
+                    .delete_mail_message(&recipient_aid, seq)
+                    .map_err(|e| e.to_string());
+                let _ = sender.send(result);
+            }
+            StorageMessage::SaveMailReceipt {
+                signer_aid,
+                message_id,
+                receipt_json,
+                sender,
+            } => {
+                let result = self
+                    .db
+                    .save_mail_receipt(&signer_aid, &message_id, &receipt_json)
+                    .map_err(|e| e.to_string());
+                let _ = sender.send(result);
+            }
+            // ----- Vault -----
+            StorageMessage::VaultPut { said, data, sender } => {
+                let result = self.db.vault_put(&said, &data).map_err(|e| e.to_string());
+                let _ = sender.send(result);
+            }
+            StorageMessage::VaultGet { said, sender } => {
+                let result = self.db.vault_get(&said).map_err(|e| e.to_string());
+                let _ = sender.send(result);
+            }
         }
     }
 }
@@ -304,5 +404,104 @@ impl StorageHandle {
 
         let _ = self.database_sender.send(msg).await;
         recv.await.expect("Actor task has been killed")
+    }
+
+    // ----- Mail -----
+
+    pub async fn save_mail_message(
+        &self,
+        recipient_aid: &str,
+        envelope_json: &str,
+    ) -> Result<u64, anyhow::Error> {
+        let (send, recv) = oneshot::channel();
+        let msg = StorageMessage::SaveMailMessage {
+            recipient_aid: recipient_aid.to_string(),
+            envelope_json: envelope_json.to_string(),
+            sender: send,
+        };
+        let _ = self.database_sender.send(msg).await;
+        recv.await
+            .expect("Actor task has been killed")
+            .map_err(|e| anyhow::anyhow!(e))
+    }
+
+    pub async fn get_mail_messages(
+        &self,
+        recipient_aid: &str,
+        from_seq: u64,
+    ) -> Result<Vec<serde_json::Value>, anyhow::Error> {
+        let (send, recv) = oneshot::channel();
+        let msg = StorageMessage::GetMailMessages {
+            recipient_aid: recipient_aid.to_string(),
+            from_seq,
+            sender: send,
+        };
+        let _ = self.database_sender.send(msg).await;
+        recv.await
+            .expect("Actor task has been killed")
+            .map_err(|e| anyhow::anyhow!(e))
+    }
+
+    pub async fn delete_mail_message(
+        &self,
+        recipient_aid: &str,
+        seq: u64,
+    ) -> Result<(), anyhow::Error> {
+        let (send, recv) = oneshot::channel();
+        let msg = StorageMessage::DeleteMailMessage {
+            recipient_aid: recipient_aid.to_string(),
+            seq,
+            sender: send,
+        };
+        let _ = self.database_sender.send(msg).await;
+        recv.await
+            .expect("Actor task has been killed")
+            .map_err(|e| anyhow::anyhow!(e))
+    }
+
+    pub async fn save_mail_receipt(
+        &self,
+        signer_aid: &str,
+        message_id: &str,
+        receipt_json: &str,
+    ) -> Result<(), anyhow::Error> {
+        let (send, recv) = oneshot::channel();
+        let msg = StorageMessage::SaveMailReceipt {
+            signer_aid: signer_aid.to_string(),
+            message_id: message_id.to_string(),
+            receipt_json: receipt_json.to_string(),
+            sender: send,
+        };
+        let _ = self.database_sender.send(msg).await;
+        recv.await
+            .expect("Actor task has been killed")
+            .map_err(|e| anyhow::anyhow!(e))
+    }
+
+    // ----- Vault -----
+
+    pub async fn vault_put(&self, said: &str, data: &[u8]) -> Result<(), anyhow::Error> {
+        let (send, recv) = oneshot::channel();
+        let msg = StorageMessage::VaultPut {
+            said: said.to_string(),
+            data: data.to_vec(),
+            sender: send,
+        };
+        let _ = self.database_sender.send(msg).await;
+        recv.await
+            .expect("Actor task has been killed")
+            .map_err(|e| anyhow::anyhow!(e))
+    }
+
+    pub async fn vault_get(&self, said: &str) -> Result<Option<Vec<u8>>, anyhow::Error> {
+        let (send, recv) = oneshot::channel();
+        let msg = StorageMessage::VaultGet {
+            said: said.to_string(),
+            sender: send,
+        };
+        let _ = self.database_sender.send(msg).await;
+        recv.await
+            .expect("Actor task has been killed")
+            .map_err(|e| anyhow::anyhow!(e))
     }
 }
