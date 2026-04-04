@@ -703,12 +703,46 @@ mod http_handlers {
             .validate_session(token)
             .await
             .ok_or(ApiError::Unauthorized)?;
-        let invites = data
+        let raw_invites = data
             .channel_handle
             .get_pending_invites(&session.aid)
             .await;
-        debug!(aid = %session.aid, count = invites.len(), "GET /channels/pending -> 200");
-        Ok(HttpResponse::Ok().json(invites))
+
+        // Enrich invite tuples with channel metadata
+        let mut result = Vec::new();
+        for (channel_said, invite_json) in &raw_invites {
+            let invite_data: serde_json::Value =
+                serde_json::from_str(invite_json).unwrap_or_default();
+            let inviter = invite_data
+                .get("inviter")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            // Look up channel for type and topic
+            let (channel_type, topic) =
+                if let Some(ch) = data.channel_handle.get(channel_said).await {
+                    (
+                        serde_json::to_value(&ch.channel_type)
+                            .ok()
+                            .and_then(|v| v.as_str().map(|s| s.to_string()))
+                            .unwrap_or_else(|| "group".to_string()),
+                        ch.topic.clone(),
+                    )
+                } else {
+                    ("group".to_string(), None)
+                };
+
+            result.push(serde_json::json!({
+                "channel_said": channel_said,
+                "channel_type": channel_type,
+                "topic": topic,
+                "inviter_aid": inviter,
+            }));
+        }
+
+        debug!(aid = %session.aid, count = result.len(), "GET /channels/pending -> 200");
+        Ok(HttpResponse::Ok().json(result))
     }
 
     /// Get channel metadata by SAID (authenticated, must be member).
