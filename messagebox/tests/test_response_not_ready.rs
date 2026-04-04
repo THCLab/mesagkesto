@@ -119,7 +119,7 @@ pub mod test {
         // Setup messagebox
         let msg_db_dir = Builder::new().prefix("test-msgdb").tempdir().unwrap();
         let db = Db::open(msg_db_dir.path()).expect("Failed to open test db");
-        let msg_box = MessageBox::setup(db, messagebox_db.path(), messagebox_oobi_db.path(), watcher_oobi, "http://url.com".parse().unwrap(), None, Some("AAAAky1v068:APA91bHHpGtP6M5h3ICFc9AzY35MrkTmjwblkLlEJ1C0yvkrUu7KDkmkXMzPq2q-0o1l49fKxOeDQaKIkZTTEAIX3Jd45j6KNtSempYqop4Psitvz2Ng7iBz-IeS1SGEs1GpnWseJlpP".to_string()), None).await.unwrap();
+        let msg_box = MessageBox::setup(db, messagebox_db.path(), messagebox_oobi_db.path(), watcher_oobi, "http://url.com".parse().unwrap(), None, Some("AAAAky1v068:APA91bHHpGtP6M5h3ICFc9AzY35MrkTmjwblkLlEJ1C0yvkrUu7KDkmkXMzPq2q-0o1l49fKxOeDQaKIkZTTEAIX3Jd45j6KNtSempYqop4Psitvz2Ng7iBz-IeS1SGEs1GpnWseJlpP".to_string()), None, None).await.unwrap();
 
         msg_box
             .resolve_oobi(witness_oobi_st.to_string())

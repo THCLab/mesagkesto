@@ -10,15 +10,18 @@ use tracing_actix_web::TracingLogger;
 
 pub struct MessageBoxListener {
     pub messagebox: MessageBox,
+    pub mqtt_url: Option<String>,
 }
 
 impl MessageBoxListener {
     pub fn listen_http(&self, addr: impl ToSocketAddrs) -> Result<Server> {
         let state = Data::new(Arc::new(self.messagebox.clone()));
+        let mqtt_url = Data::new(self.mqtt_url.clone());
         Ok(HttpServer::new(move || {
             App::new()
                 .wrap(TracingLogger::default())
                 .app_data(state.clone())
+                .app_data(mqtt_url.clone())
                 .route(
                     "/introduce",
                     actix_web::web::get().to(http_handlers::introduce),
@@ -76,6 +79,10 @@ impl MessageBoxListener {
                     "/mailbox/acl",
                     actix_web::web::get().to(http_handlers::get_acl),
                 )
+                .route(
+                    "/mqtt/authz",
+                    actix_web::web::post().to(http_handlers::mqtt_authz),
+                )
         })
         .bind(addr)?
         .run())
@@ -100,6 +107,40 @@ mod http_handlers {
     use crate::ws_session::WsSession;
 
     use super::ApiError;
+
+    /// JWT claims for MQTT authentication with EMQX.
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct MqttClaims {
+        /// AID — used as MQTT client_id
+        sub: String,
+        /// Expiry (Unix timestamp)
+        exp: usize,
+        /// Issued at (Unix timestamp)
+        iat: usize,
+    }
+
+    /// Build a signed JWT for the given AID using the shared secret.
+    fn build_mqtt_jwt(aid: &str, jwt_secret: &str, expires_at: &str) -> Result<String, ApiError> {
+        let now = chrono::Utc::now().timestamp() as usize;
+        let exp = expires_at
+            .parse::<chrono::DateTime<chrono::Utc>>()
+            .map(|dt| dt.timestamp() as usize)
+            .unwrap_or(now + 3600);
+
+        let claims = MqttClaims {
+            sub: aid.to_string(),
+            exp,
+            iat: now,
+        };
+        let key = jsonwebtoken::EncodingKey::from_secret(jwt_secret.as_bytes());
+        let header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256);
+        jsonwebtoken::encode(&header, &claims, &key).map_err(|e| {
+            ApiError::MessageboxError(crate::MessageboxError::AuthError(format!(
+                "JWT signing failed: {}",
+                e
+            )))
+        })
+    }
 
     fn oobis_to_cesr_stream(
         oobis: &mut impl Iterator<Item = SignedReply>,
@@ -332,6 +373,7 @@ mod http_handlers {
     pub async fn auth_respond(
         body: String,
         data: web::Data<Arc<MessageBox>>,
+        mqtt_url: web::Data<Option<String>>,
     ) -> Result<HttpResponse, ApiError> {
         debug!(body_len = body.len(), "POST /auth/respond");
         let auth = data
@@ -372,12 +414,28 @@ mod http_handlers {
             AuthResult::Authenticated { session } => {
                 debug!(aid = %session.aid, "POST /auth/respond -> 200 authenticated");
                 let _ = data.mailbox_handle.activate(session.aid.clone()).await;
-                Ok(HttpResponse::Ok().json(dauthz_core::SessionToken {
-                    token: session.token,
-                    account_id: session.account_id,
-                    aid: session.aid,
-                    expires_at: session.expires_at,
-                }))
+
+                // Build MQTT JWT if jwt_secret is configured
+                let mqtt_token = data
+                    .jwt_secret
+                    .as_ref()
+                    .and_then(|secret| {
+                        build_mqtt_jwt(&session.aid, secret, &session.expires_at).ok()
+                    });
+
+                let mut response = serde_json::json!({
+                    "token": session.token,
+                    "account_id": session.account_id,
+                    "aid": session.aid,
+                    "expires_at": session.expires_at,
+                });
+                if let Some(jwt) = mqtt_token {
+                    response["mqtt_token"] = serde_json::Value::String(jwt);
+                }
+                if let Some(url) = mqtt_url.as_ref() {
+                    response["mqtt_url"] = serde_json::Value::String(url.clone());
+                }
+                Ok(HttpResponse::Ok().json(response))
             }
             AuthResult::Invalid(reason) => {
                 warn!(reason = %reason, "POST /auth/respond -> 401 invalid");
@@ -559,6 +617,47 @@ mod http_handlers {
         let tokens = data.acl_handle.get_tokens(&session.aid).await;
         debug!(aid = %session.aid, token_count = tokens.len(), "GET /mailbox/acl -> 200");
         Ok(HttpResponse::Ok().json(serde_json::json!({"tokens": tokens})))
+    }
+
+    /// EMQX HTTP authorization hook.
+    /// Called by EMQX on each PUBLISH to check sender-level ACL.
+    /// Only enforces ACL for publishes to `msg/inbox/{recipient_aid}`.
+    #[derive(serde::Deserialize)]
+    pub struct MqttAuthzRequest {
+        clientid: String,
+        topic: String,
+        action: String,
+    }
+
+    pub async fn mqtt_authz(
+        body: web::Json<MqttAuthzRequest>,
+        data: web::Data<Arc<MessageBox>>,
+    ) -> Result<HttpResponse, ApiError> {
+        let req = body.into_inner();
+        debug!(
+            clientid = %req.clientid,
+            topic = %req.topic,
+            action = %req.action,
+            "POST /mqtt/authz"
+        );
+
+        // Only enforce ACL for publish to inbox topics
+        if req.action == "publish" {
+            if let Some(recipient_aid) = req.topic.strip_prefix("msg/inbox/") {
+                let acl_tokens = data.acl_handle.get_tokens(recipient_aid).await;
+                // Empty ACL = open inbox (anyone can send)
+                if !acl_tokens.is_empty() && !acl_tokens.contains(&req.clientid) {
+                    debug!(
+                        sender = %req.clientid,
+                        recipient = %recipient_aid,
+                        "MQTT authz denied: sender not in ACL"
+                    );
+                    return Ok(HttpResponse::Ok().json(serde_json::json!({"result": "deny"})));
+                }
+            }
+        }
+
+        Ok(HttpResponse::Ok().json(serde_json::json!({"result": "allow"})))
     }
 }
 

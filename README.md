@@ -13,11 +13,12 @@ cryptographic signatures against the sender's Key Event Log (KEL).
 
 - **KERI-native identity** — AIDs (Autonomous Identifiers) are first-class citizens
 - **DauthZ authentication** — challenge-response proof of AID ownership for mailbox provisioning
+- **MQTT integration (EMQX)** — issues JWTs for MQTT broker authentication; acts as auth bridge between KERI and EMQX
 - **Persistent storage** — messages stored in embedded redb database, survive restarts
-- **Session management** — JWT-like session tokens with expiry and revocation
+- **Session management** — session tokens with expiry and revocation; MQTT JWTs issued alongside session tokens
 - **Mailbox lifecycle** — provision, activate, suspend, and delete mailboxes
-- **WebSocket real-time transport** — bidirectional messaging with presence and typing indicators
-- **Contact list (ACL)** — HMAC-based blind authorization whitelist; server cannot inspect contacts
+- **WebSocket real-time transport** — bidirectional messaging with presence and typing indicators (legacy, being replaced by MQTT)
+- **Contact list (ACL)** — per-mailbox sender whitelist; enforced both on HTTP endpoints and via EMQX authorization hook
 - **Firebase push notifications** — notify clients of new messages
 - **OOBI resolution** — discover and resolve identifier endpoints
 
@@ -43,10 +44,15 @@ See [`messagebox.yml.example`](messagebox.yml.example) for a fully commented tem
 | `server_key` | Firebase Cloud Messaging server key for push notifications | Yes |
 | `seed` | Ed25519 keypair seed (CESR-encoded). Auto-generated if omitted | No |
 | `dauthz_state_dir` | Directory for DauthZ state. Enables auth, mailbox, ACL, and WebSocket endpoints | No |
+| `jwt_secret` | Shared secret for signing MQTT JWTs (HS256). Must match EMQX `AUTHENTICATION__1__SECRET` | No |
+| `mqtt_url` | MQTT broker WebSocket URL returned to clients (e.g. `ws://host:8083/mqtt`) | No |
 
 **Modes of operation:**
 - **With `dauthz_state_dir`** — Full messaging service: authentication, mailboxes, ACL, WebSocket, and KERI relay.
 - **Without `dauthz_state_dir`** — KERI relay only: message processing, OOBI resolution, no auth or mailbox endpoints.
+
+**MQTT mode** (requires `jwt_secret` + `mqtt_url`):
+When both are set, `POST /auth/respond` returns additional fields in the authentication response: `mqtt_token` (a signed JWT for the MQTT broker) and `mqtt_url`. Clients use these to connect to EMQX directly for real-time messaging, bypassing HTTP for message exchange. The `jwt_secret` must match the EMQX JWT authentication secret.
 
 CLI arguments (`-d`, `-u`, `-p`, `-s`, `-k`) override YAML config values.
 
@@ -118,6 +124,29 @@ Requires authentication (`Authorization: Bearer <token>`).
 | `PUT /mailbox/acl` | Set ACL whitelist tokens |
 | `GET /mailbox/acl` | Get ACL whitelist tokens |
 
+### MQTT Authorization Endpoint
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST /mqtt/authz` | EMQX HTTP authorization hook for sender-level ACL checks |
+
+This endpoint is called by EMQX on each PUBLISH to `msg/inbox/{recipient_aid}`. It checks the sender's `clientid` (AID) against the recipient's ACL whitelist. If the ACL is empty, the inbox is open (anyone can send). If the ACL has entries, only listed AIDs are permitted.
+
+Configure in EMQX as an HTTP authorization backend:
+
+```
+authorization.sources.2 {
+  type = http
+  method = post
+  url = "http://mesagkesto:3236/mqtt/authz"
+  body {
+    clientid = "${clientid}"
+    topic = "${topic}"
+    action = "${action}"
+  }
+}
+```
+
 ### WebSocket
 
 | Method | Path | Description |
@@ -141,10 +170,11 @@ Requires authentication (`Authorization: Bearer <token>`).
 
 Sessions are issued on successful identification (login) and stored in the embedded redb database.
 
-- **Token format**: UUID v4
-- **Expiry**: 1 hour from issuance
-- **Validation**: checked on every authenticated request; expired sessions are automatically cleaned up
-- **Revocation**: `DELETE /auth/session` with the token in the `Authorization` header
+- **Token format**: UUID v4 (session token) + HS256 JWT (MQTT token, when `jwt_secret` is configured)
+- **Expiry**: 1 hour from issuance (both session and MQTT tokens share the same expiry)
+- **Validation**: session tokens checked on every authenticated HTTP request; expired sessions are automatically cleaned up
+- **MQTT JWT claims**: `sub` = AID (used as MQTT `client_id`), `exp` = expiry timestamp, `iat` = issued-at
+- **Revocation**: `DELETE /auth/session` with the session token in the `Authorization` header
 - **Multi-device**: multiple sessions can be active for the same AID simultaneously
 
 ### Contact List (ACL)

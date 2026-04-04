@@ -31,3 +31,14 @@ watcher_oobi: '{"eid":"BBilc4-L3tFUnfM_wJr4S4OJanAv_VmF_dJNN6vkf2Ha","scheme":"h
 # and authenticated mailbox/ACL/WebSocket endpoints.
 # Comment out to run in unauthenticated relay-only mode.
 dauthz_state_dir: "./dauthz/"
+
+# Shared secret for signing MQTT JWT tokens (HS256).
+# Must match the MESAGKESTO_JWT_SECRET environment variable configured
+# in EMQX. Default for development: "mesagkesto-dev-secret-change-me".
+# In production, use a strong random secret or switch to RS256.
+jwt_secret: "mesagkesto-dev-secret-change-me"
+
+# MQTT broker WebSocket URL. When set, the auth response includes
+# an mqtt_token (JWT) and this URL so clients can connect to EMQX
+# for real-time messaging instead of HTTP polling.
+mqtt_url: "ws://localhost:8083/mqtt"

@@ -31,6 +31,7 @@ dauthz-server = { path = "../../DauthZ/dauthz-server" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-actix-web = "0.7"
+jsonwebtoken = "9"
 
 [dev-dependencies]
 tempfile = "3.8.1"

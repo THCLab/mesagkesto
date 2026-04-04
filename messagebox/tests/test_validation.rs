@@ -41,29 +41,30 @@ async fn test_validation() -> Result<(), Error> {
         None,
         Some(server_key),
         None,
+        None,
     )
     .await
     .unwrap();
 
     messagebox
         .validator_handle
-        .validate(reg.to_string())
+        .validate(reg.to_string(), None)
         .await?;
     messagebox
         .validator_handle
-        .validate(exchange.to_string())
+        .validate(exchange.to_string(), None)
         .await?;
     messagebox
         .validator_handle
-        .validate(exchange1.to_string())
+        .validate(exchange1.to_string(), None)
         .await?;
     messagebox
         .validator_handle
-        .validate(exchange2.to_string())
+        .validate(exchange2.to_string(), None)
         .await?;
     let res = messagebox
         .validator_handle
-        .validate(query.to_string())
+        .validate(query.to_string(), None)
         .await;
     assert_eq!(
         res?.unwrap(),
@@ -73,14 +74,14 @@ async fn test_validation() -> Result<(), Error> {
     let query = query_by_sn("Identifier".to_string(), 2);
     let res = messagebox
         .validator_handle
-        .validate(query.to_string())
+        .validate(query.to_string(), None)
         .await;
     assert_eq!(res?.unwrap(), "{\"last_sn\":2,\"messages\":[\"saved2\"]}");
 
     let query = query_by_sn("Identifier".to_string(), 4);
     let res = messagebox
         .validator_handle
-        .validate(query.to_string())
+        .validate(query.to_string(), None)
         .await;
     assert_eq!(res?, None);
 
@@ -91,7 +92,7 @@ async fn test_validation() -> Result<(), Error> {
     let query_by_digest = serde_json::to_string(&qry).unwrap();
     dbg!(query_by_digest);
 
-    let res = messagebox.validator_handle.validate(qry.to_string()).await;
+    let res = messagebox.validator_handle.validate(qry.to_string(), None).await;
     assert_eq!(res?, Some("[\"saved0\",\"saved1\"]".to_string()));
 
     Ok(())

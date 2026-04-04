@@ -36,6 +36,12 @@ pub struct Config {
 
     /// DauthZ state directory (enables authentication)
     dauthz_state_dir: Option<PathBuf>,
+
+    /// Shared secret for signing MQTT JWTs (must match EMQX config)
+    jwt_secret: Option<String>,
+
+    /// MQTT broker WebSocket URL (e.g. ws://host:8083/mqtt)
+    mqtt_url: Option<String>,
 }
 
 #[derive(Debug, Parser, Serialize)]
@@ -98,11 +104,15 @@ async fn main() -> Result<()> {
         cfg.seed,
         cfg.server_key,
         cfg.dauthz_state_dir.as_deref(),
+        cfg.jwt_secret.clone(),
     )
     .await?;
     let messagebox_oobi = data.oobi();
 
-    let listener = MessageBoxListener { messagebox: data };
+    let listener = MessageBoxListener {
+        messagebox: data,
+        mqtt_url: cfg.mqtt_url,
+    };
     info!(
         oobi = %serde_json::to_string(&messagebox_oobi).map_err(|_e| MessageboxError::OobiParsingError)?,
         "Messagebox is listening"

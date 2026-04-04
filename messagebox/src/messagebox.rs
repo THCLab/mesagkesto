@@ -34,6 +34,7 @@ pub struct MessageBox {
     pub mailbox_handle: MailboxHandle,
     pub acl_handle: AclHandle,
     pub connection_manager: Addr<ConnectionManager>,
+    pub jwt_secret: Option<String>,
 }
 
 impl MessageBox {
@@ -46,6 +47,7 @@ impl MessageBox {
         seed: Option<String>,
         server_key: Option<String>,
         dauthz_state_dir: Option<&Path>,
+        jwt_secret: Option<String>,
     ) -> Result<Self, MessageboxError> {
         debug!("Setting up messagebox");
         let signer = Arc::new(
@@ -129,6 +131,7 @@ impl MessageBox {
             mailbox_handle,
             acl_handle,
             connection_manager,
+            jwt_secret,
         })
     }
 

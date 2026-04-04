@@ -221,7 +221,7 @@ pub mod test {
         let notify_handle =
             NotifyHandle::new("AAAAky1v068:APA91bHHpGtP6M5h3ICFc9AzY35MrkTmjwblkLlEJ1C0yvkrUu7KDkmkXMzPq2q-0o1l49fKxOeDQaKIkZTTEAIX3Jd45j6KNtSempYqop4Psitvz2Ng7iBz-IeS1SGEs1GpnWseJlpP".to_string(), db.clone());
         let storage_handle = StorageHandle::new(db.clone(), notify_handle.clone());
-        let response_handle = ResponsesHandle::new(db);
+        let response_handle = ResponsesHandle::new(db.clone());
         let acl_handle = AclHandle::new(db.clone());
         let validator_handle = ValidateHandle::new(
             storage_handle.clone(),
