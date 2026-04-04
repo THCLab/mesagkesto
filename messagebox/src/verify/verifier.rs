@@ -98,11 +98,12 @@ impl VerifyData {
         })
     }
 
+    /// Verify a signature and return (valid, sender_id).
     fn verify(
         s: &Signature,
         data: &[u8],
         storage: Arc<EventStorage<RedbDatabase>>,
-    ) -> Result<bool, MessageboxError> {
+    ) -> Result<(bool, Option<IdentifierPrefix>), MessageboxError> {
         match s {
             Signature::Transferable(sigd, sigs) => {
                 let (kc, id, event_sai) = match sigd {
@@ -121,14 +122,14 @@ impl VerifyData {
                     keri_sdk::keri_core::event_message::signature::SignerData::JustSignatures => todo!(),
                 };
                 if let Some(k) = kc {
-                    Ok(k.verify(data, sigs).unwrap())
+                    Ok((k.verify(data, sigs).unwrap(), Some(id)))
                 } else {
                     Err(MessageboxError::MissingEvent(id, event_sai.unwrap()))
                 }
             }
-            Signature::NonTransferable(Nontransferable::Couplet(couplets)) => Ok(couplets
+            Signature::NonTransferable(Nontransferable::Couplet(couplets)) => Ok((couplets
                 .iter()
-                .all(|(id, sig)| id.verify(data, sig).unwrap())),
+                .all(|(id, sig)| id.verify(data, sig).unwrap()), None)),
             Signature::NonTransferable(Nontransferable::Indexed(_sigs)) => {
                 todo!()
             }
@@ -208,11 +209,12 @@ impl VerifyData {
         }
     }
 
+    /// Verify message signatures and return the sender's AID if available.
     async fn verify_message(
         &self,
         message: &str,
         signatures: Vec<Signature>,
-    ) -> Result<(), MessageboxError> {
+    ) -> Result<Option<IdentifierPrefix>, MessageboxError> {
         debug!(
             message_len = message.len(),
             sig_count = signatures.len(),
@@ -228,14 +230,16 @@ impl VerifyData {
                     self.controller.known_events.storage.clone(),
                 )
             })
-            .collect::<Result<Vec<bool>, _>>();
+            .collect::<Result<Vec<(bool, Option<IdentifierPrefix>)>, _>>();
         debug!(result = ?ver_res, "Signature verification result");
 
         match ver_res {
             Ok(res) => {
-                if res.into_iter().all(|a| a) {
+                let all_valid = res.iter().all(|(valid, _)| *valid);
+                let sender_id = res.iter().find_map(|(_, id)| id.clone());
+                if all_valid {
                     info!("Message verified successfully");
-                    Ok(())
+                    Ok(sender_id)
                 } else {
                     warn!("Message verification failed: some signatures invalid");
                     Err(MessageboxError::VerificationFailure)

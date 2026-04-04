@@ -186,6 +186,11 @@ mod http_handlers {
                 );
                 HttpResponse::Accepted().body(message)
             }
+            Err(MessageboxError::AclDenied(ref sender)) => {
+                warn!(sender = %sender, "POST / -> 403 ACL denied");
+                HttpResponse::Forbidden()
+                    .json(serde_json::json!({"error": "acl_denied", "reason": format!("Sender {} is not authorized to send to this mailbox", sender)}))
+            }
             Err(MessageboxError::MissingOobi) => {
                 warn!("POST / -> 422 missing OOBI");
                 HttpResponse::UnprocessableEntity()

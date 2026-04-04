@@ -55,6 +55,8 @@ pub enum MessageboxError {
     SigningError(#[from] KeysError),
     #[error("Authentication error: {0}")]
     AuthError(String),
+    #[error("ACL denied: sender {0} is not authorized to send to this mailbox")]
+    AclDenied(String),
 }
 
 pub fn register_token(id: String, token: String) -> MessageType {

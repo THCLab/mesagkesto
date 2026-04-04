@@ -5,7 +5,7 @@ mod verifier;
 
 use std::{path::Path, sync::Arc};
 
-use keri_sdk::{LocationScheme, Signature};
+use keri_sdk::{IdentifierPrefix, LocationScheme, Signature};
 use tokio::sync::{
     mpsc::{self},
     oneshot,
@@ -22,8 +22,8 @@ pub enum VerifyMessage {
     Verify {
         message: String,
         signatures: Vec<Signature>,
-        // where to return result
-        sender: oneshot::Sender<Result<(), MessageboxError>>,
+        // where to return result — Ok carries the verified sender AID (if extractable)
+        sender: oneshot::Sender<Result<Option<IdentifierPrefix>, MessageboxError>>,
     },
     Oobi {
         message: String,
@@ -109,11 +109,12 @@ impl VerifyHandle {
         }
     }
 
+    /// Verify the message and return the sender's AID if extractable.
     pub async fn verify(
         &self,
         message: &str,
         signatures: Vec<Signature>,
-    ) -> Result<(), MessageboxError> {
+    ) -> Result<Option<IdentifierPrefix>, MessageboxError> {
         let (send, recv) = oneshot::channel();
         let msg = VerifyMessage::Verify {
             message: message.to_string(),
@@ -146,8 +147,9 @@ pub mod test {
     use tokio::time::sleep;
 
     use crate::{
-        db::Db, forward_message, notifier::NotifyHandle, responses_store::ResponsesHandle,
-        storage::StorageHandle, validate::ValidateHandle, verify::VerifyHandle, MessageboxError,
+        acl::AclHandle, db::Db, forward_message, notifier::NotifyHandle,
+        responses_store::ResponsesHandle, storage::StorageHandle, validate::ValidateHandle,
+        verify::VerifyHandle, MessageboxError,
     };
 
     #[actix_web::test]
@@ -220,10 +222,12 @@ pub mod test {
             NotifyHandle::new("AAAAky1v068:APA91bHHpGtP6M5h3ICFc9AzY35MrkTmjwblkLlEJ1C0yvkrUu7KDkmkXMzPq2q-0o1l49fKxOeDQaKIkZTTEAIX3Jd45j6KNtSempYqop4Psitvz2Ng7iBz-IeS1SGEs1GpnWseJlpP".to_string(), db.clone());
         let storage_handle = StorageHandle::new(db.clone(), notify_handle.clone());
         let response_handle = ResponsesHandle::new(db);
+        let acl_handle = AclHandle::new(db.clone());
         let validator_handle = ValidateHandle::new(
             storage_handle.clone(),
             notify_handle,
             response_handle.clone(),
+            acl_handle,
         );
         let watcher_oobi = serde_json::from_str(r#"{"eid":"BF2t2NPc1bwptY1hYV0YCib1JjQ11k9jtuaZemecPF5b","scheme":"http","url":"http://localhost:3236/"}"#).unwrap();
         let root = Builder::new().prefix("test-db2").tempdir().unwrap();

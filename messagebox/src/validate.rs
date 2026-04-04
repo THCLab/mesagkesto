@@ -4,8 +4,8 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, info, warn};
 
 use crate::{
-    notifier::NotifyHandle, responses_store::ResponsesHandle, storage::StorageHandle,
-    MessageboxError,
+    acl::AclHandle, notifier::NotifyHandle, responses_store::ResponsesHandle,
+    storage::StorageHandle, MessageboxError,
 };
 
 #[derive(Serialize, Deserialize)]
@@ -49,6 +49,8 @@ pub enum ExchangeArguments {
 pub enum ValidateMessage {
     Authenticate {
         message: String,
+        /// AID of the CESR-verified sender (if extractable from signature)
+        sender_aid: Option<String>,
         // where to return result
         sender: oneshot::Sender<Result<Option<String>, MessageboxError>>,
     },
@@ -63,6 +65,7 @@ pub struct ValidateActor {
     storage: StorageHandle,
     notify: NotifyHandle,
     responses_handle: ResponsesHandle,
+    acl: AclHandle,
 }
 
 impl ValidateActor {
@@ -71,17 +74,23 @@ impl ValidateActor {
         storage: StorageHandle,
         notify: NotifyHandle,
         responses: ResponsesHandle,
+        acl: AclHandle,
     ) -> Self {
         ValidateActor {
             receiver,
             storage,
             notify,
             responses_handle: responses,
+            acl,
         }
     }
 
-    async fn process(&self, message: &str) -> Result<Option<String>, MessageboxError> {
-        debug!(message_len = message.len(), "Processing message");
+    async fn process(
+        &self,
+        message: &str,
+        sender_aid: Option<&str>,
+    ) -> Result<Option<String>, MessageboxError> {
+        debug!(message_len = message.len(), sender = ?sender_aid, "Processing message");
         if let Ok(parsed) = serde_json::from_str::<MessageType>(message) {
             match parsed {
                 MessageType::Qry(qry) => match qry {
@@ -96,7 +105,26 @@ impl ValidateActor {
                 },
                 MessageType::Exn(exn) => match exn {
                     ExchangeArguments::Fwd { i, a } => {
-                        info!(from_identifier = %i, msg_len = a.len(), "Forwarding message");
+                        // ACL enforcement: check if the sender is authorized to
+                        // write to recipient `i`'s mailbox.
+                        let acl_tokens = self.acl.get_tokens(&i).await;
+                        if !acl_tokens.is_empty() {
+                            let authorized = match sender_aid {
+                                Some(aid) => acl_tokens.iter().any(|t| t == aid),
+                                None => false,
+                            };
+                            if !authorized {
+                                let sender_str = sender_aid.unwrap_or("unknown").to_string();
+                                warn!(
+                                    sender = %sender_str,
+                                    recipient = %i,
+                                    "ACL denied: sender not in recipient's whitelist"
+                                );
+                                return Err(MessageboxError::AclDenied(sender_str));
+                            }
+                        }
+
+                        info!(recipient = %i, sender = ?sender_aid, msg_len = a.len(), "Forwarding message");
                         let digest_algo: HashFunction = (HashFunctionCode::Blake3_256).into();
                         let sai = digest_algo.derive(a.as_bytes()).to_string();
                         self.storage.save(i.clone(), a, sai).await.to_string();
@@ -120,16 +148,21 @@ impl ValidateActor {
 
     async fn handle_message(&mut self, msg: ValidateMessage) {
         match msg {
-            ValidateMessage::Authenticate { message, sender } => {
+            ValidateMessage::Authenticate {
+                message,
+                sender_aid,
+                sender,
+            } => {
                 debug!(
                     message_len = message.len(),
+                    sender_aid = ?sender_aid,
                     "Validating and authenticating message"
                 );
-                let _ = sender.send(self.process(&message).await);
+                let _ = sender.send(self.process(&message, sender_aid.as_deref()).await);
             }
             ValidateMessage::ProcessAndSave { message } => {
                 debug!(message_len = message.len(), "Processing and saving message");
-                match self.process(&message).await {
+                match self.process(&message, None).await {
                     Ok(to_save) => {
                         if let Some(response) = to_save {
                             debug!(response_len = response.len(), "Saving async query response");
@@ -166,9 +199,16 @@ impl ValidateHandle {
         storage_handle: StorageHandle,
         notify_handle: NotifyHandle,
         responses: ResponsesHandle,
+        acl_handle: AclHandle,
     ) -> Self {
         let (sender, receiver) = mpsc::channel(8);
-        let actor = ValidateActor::new(receiver, storage_handle, notify_handle, responses);
+        let actor = ValidateActor::new(
+            receiver,
+            storage_handle,
+            notify_handle,
+            responses,
+            acl_handle,
+        );
         tokio::spawn(run_my_actor(actor));
         debug!("Validate actor initialized");
 
@@ -177,10 +217,15 @@ impl ValidateHandle {
         }
     }
 
-    pub async fn validate(&self, message: String) -> Result<Option<String>, MessageboxError> {
+    pub async fn validate(
+        &self,
+        message: String,
+        sender_aid: Option<String>,
+    ) -> Result<Option<String>, MessageboxError> {
         let (send, recv) = oneshot::channel();
         let msg = ValidateMessage::Authenticate {
             message,
+            sender_aid,
             sender: send,
         };
 

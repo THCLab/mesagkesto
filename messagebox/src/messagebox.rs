@@ -110,6 +110,7 @@ impl MessageBox {
             storage_handle.clone(),
             notify_handle,
             response_handle.clone(),
+            acl_handle.clone(),
         );
         debug!("Initializing verify handle");
         let verify_handle =
@@ -140,12 +141,13 @@ impl MessageBox {
         debug!(sig_count = sig_vec.len(), "Message signatures parsed");
 
         match self.verify_handle.verify(&payload_str, sig_vec).await {
-            Ok(_) => {
-                info!("Message verified successfully, validating");
-                self.validator_handle.validate(payload_str).await
+            Ok(sender_id) => {
+                let sender_aid_str = sender_id.as_ref().map(|id| id.to_string());
+                info!(sender = ?sender_aid_str, "Message verified successfully, validating");
+                self.validator_handle
+                    .validate(payload_str, sender_aid_str)
+                    .await
             }
-            // Err(MessageboxError::MissingEvent(id, dig )) => {
-            // },
             Err(e) => {
                 tracing::warn!(error = %e, "Message verification failed");
                 Err(e)
