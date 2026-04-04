@@ -223,11 +223,13 @@ pub mod test {
         let storage_handle = StorageHandle::new(db.clone(), notify_handle.clone());
         let response_handle = ResponsesHandle::new(db.clone());
         let acl_handle = AclHandle::new(db.clone());
+        let channel_handle = crate::channel::ChannelHandle::new(db.clone());
         let validator_handle = ValidateHandle::new(
             storage_handle.clone(),
             notify_handle,
             response_handle.clone(),
             acl_handle,
+            channel_handle,
         );
         let watcher_oobi = serde_json::from_str(r#"{"eid":"BF2t2NPc1bwptY1hYV0YCib1JjQ11k9jtuaZemecPF5b","scheme":"http","url":"http://localhost:3236/"}"#).unwrap();
         let root = Builder::new().prefix("test-db2").tempdir().unwrap();

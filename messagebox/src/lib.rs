@@ -7,6 +7,7 @@ use validate::ExchangeArguments;
 
 pub mod acl;
 pub mod auth;
+pub mod channel;
 pub mod connection;
 pub mod db;
 pub mod mailbox;

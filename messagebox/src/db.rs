@@ -26,6 +26,29 @@ const MAILBOXES: TableDefinition<&str, &str> = TableDefinition::new("mailboxes")
 /// Table: aid -> acl_tokens_json (JSON array of hex-encoded HMAC tokens)
 const ACL_TOKENS: TableDefinition<&str, &str> = TableDefinition::new("acl_tokens");
 
+// --- Channel tables ---
+
+/// Table: channel_said -> channel_metadata_json
+const CHANNELS: TableDefinition<&str, &str> = TableDefinition::new("channels");
+
+/// Table: (channel_said, seq_no) -> message_json_string
+const CHANNEL_MESSAGES: TableDefinition<(&str, u64), &str> = TableDefinition::new("channel_messages");
+
+/// Table: (channel_said, digest) -> seq_no
+const CHANNEL_MESSAGE_INDEX: TableDefinition<(&str, &str), u64> =
+    TableDefinition::new("channel_message_index");
+
+/// Table: channel_said -> next_seq_no (counter)
+const CHANNEL_SEQUENCES: TableDefinition<&str, u64> = TableDefinition::new("channel_sequences");
+
+/// Table: (owner_aid, topic_name) -> channel_said (broadcast discovery index)
+const BROADCAST_INDEX: TableDefinition<(&str, &str), &str> =
+    TableDefinition::new("broadcast_index");
+
+/// Table: (invited_aid, channel_said) -> invite_json
+const CHANNEL_INVITES: TableDefinition<(&str, &str), &str> =
+    TableDefinition::new("channel_invites");
+
 #[derive(Debug)]
 pub struct DbError(Box<dyn std::error::Error + Send + Sync>);
 
@@ -89,6 +112,12 @@ impl Db {
         write_txn.open_table(FIREBASE_TOKENS)?;
         write_txn.open_table(MAILBOXES)?;
         write_txn.open_table(ACL_TOKENS)?;
+        write_txn.open_table(CHANNELS)?;
+        write_txn.open_table(CHANNEL_MESSAGES)?;
+        write_txn.open_table(CHANNEL_MESSAGE_INDEX)?;
+        write_txn.open_table(CHANNEL_SEQUENCES)?;
+        write_txn.open_table(BROADCAST_INDEX)?;
+        write_txn.open_table(CHANNEL_INVITES)?;
         write_txn.commit()?;
         debug!("Database tables initialized");
         Ok(())
@@ -257,6 +286,267 @@ impl Db {
         let read_txn = self.inner.begin_read()?;
         let table = read_txn.open_table(FIREBASE_TOKENS)?;
         Ok(table.get(identifier)?.map(|v| v.value().to_string()))
+    }
+
+    // --- Channels ---
+
+    pub fn save_channel(&self, said: &str, metadata_json: &str) -> Result<(), DbError> {
+        let write_txn = self.inner.begin_write()?;
+        {
+            let mut table = write_txn.open_table(CHANNELS)?;
+            table.insert(said, metadata_json)?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    pub fn get_channel(&self, said: &str) -> Result<Option<String>, DbError> {
+        let read_txn = self.inner.begin_read()?;
+        let table = read_txn.open_table(CHANNELS)?;
+        Ok(table.get(said)?.map(|v| v.value().to_string()))
+    }
+
+    pub fn delete_channel(&self, said: &str) -> Result<(), DbError> {
+        let write_txn = self.inner.begin_write()?;
+        {
+            let mut table = write_txn.open_table(CHANNELS)?;
+            table.remove(said)?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    /// Scan all channels and return those where the given AID is a member.
+    /// Returns Vec of (channel_said, metadata_json).
+    pub fn list_channels_for_aid(&self, aid: &str) -> Result<Vec<(String, String)>, DbError> {
+        let read_txn = self.inner.begin_read()?;
+        let table = read_txn.open_table(CHANNELS)?;
+        let mut results = Vec::new();
+        for entry in table.iter()? {
+            let (key, value) = entry?;
+            let metadata = value.value().to_string();
+            // Check membership by looking for the AID in the JSON
+            if metadata.contains(aid) {
+                results.push((key.value().to_string(), metadata));
+            }
+        }
+        Ok(results)
+    }
+
+    /// List all channels on this instance. Returns Vec of (channel_said, metadata_json).
+    pub fn list_all_channels(&self) -> Result<Vec<(String, String)>, DbError> {
+        let read_txn = self.inner.begin_read()?;
+        let table = read_txn.open_table(CHANNELS)?;
+        let mut results = Vec::new();
+        for entry in table.iter()? {
+            let (key, value) = entry?;
+            results.push((key.value().to_string(), value.value().to_string()));
+        }
+        Ok(results)
+    }
+
+    // --- Channel Messages ---
+
+    pub fn save_channel_message(
+        &self,
+        channel_said: &str,
+        digest: &str,
+        message: &str,
+    ) -> Result<u64, DbError> {
+        debug!(channel = %channel_said, digest = %digest, msg_len = message.len(), "Saving channel message");
+        let write_txn = self.inner.begin_write()?;
+        let seq = {
+            let mut seq_table = write_txn.open_table(CHANNEL_SEQUENCES)?;
+            let current = seq_table
+                .get(channel_said)?
+                .map(|v| v.value())
+                .unwrap_or(0);
+            let next = current + 1;
+            seq_table.insert(channel_said, next)?;
+
+            let mut msg_table = write_txn.open_table(CHANNEL_MESSAGES)?;
+            msg_table.insert((channel_said, current), message)?;
+
+            let mut idx_table = write_txn.open_table(CHANNEL_MESSAGE_INDEX)?;
+            idx_table.insert((channel_said, digest), current)?;
+
+            current
+        };
+        write_txn.commit()?;
+        debug!(channel = %channel_said, seq = seq, "Channel message saved");
+        Ok(seq)
+    }
+
+    pub fn get_channel_messages_by_sn(
+        &self,
+        channel_said: &str,
+        from_seq: usize,
+    ) -> Result<Option<(u64, Vec<String>)>, DbError> {
+        let read_txn = self.inner.begin_read()?;
+        let seq_table = read_txn.open_table(CHANNEL_SEQUENCES)?;
+
+        let total = match seq_table.get(channel_said)? {
+            Some(v) => v.value(),
+            None => return Ok(None),
+        };
+        if total == 0 {
+            return Ok(None);
+        }
+
+        let last_seq = total - 1;
+        let msg_table = read_txn.open_table(CHANNEL_MESSAGES)?;
+        let mut messages = Vec::new();
+
+        for seq in (from_seq as u64)..total {
+            if let Some(entry) = msg_table.get((channel_said, seq))? {
+                messages.push(entry.value().to_string());
+            }
+        }
+
+        if messages.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some((last_seq, messages)))
+        }
+    }
+
+    pub fn get_channel_messages_by_digest(
+        &self,
+        channel_said: &str,
+        digests: &[String],
+    ) -> Result<Option<Vec<String>>, DbError> {
+        let read_txn = self.inner.begin_read()?;
+        let idx_table = read_txn.open_table(CHANNEL_MESSAGE_INDEX)?;
+        let msg_table = read_txn.open_table(CHANNEL_MESSAGES)?;
+
+        let mut results = Vec::new();
+        for digest in digests {
+            if let Some(seq_entry) = idx_table.get((channel_said, digest.as_str()))? {
+                let seq = seq_entry.value();
+                if let Some(msg_entry) = msg_table.get((channel_said, seq))? {
+                    results.push(msg_entry.value().to_string());
+                }
+            }
+        }
+
+        if results.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(results))
+        }
+    }
+
+    // --- Broadcast Index ---
+
+    pub fn save_broadcast_index(
+        &self,
+        owner_aid: &str,
+        topic: &str,
+        channel_said: &str,
+    ) -> Result<(), DbError> {
+        let write_txn = self.inner.begin_write()?;
+        {
+            let mut table = write_txn.open_table(BROADCAST_INDEX)?;
+            table.insert((owner_aid, topic), channel_said)?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    pub fn get_broadcast_by_topic(
+        &self,
+        owner_aid: &str,
+        topic: &str,
+    ) -> Result<Option<String>, DbError> {
+        let read_txn = self.inner.begin_read()?;
+        let table = read_txn.open_table(BROADCAST_INDEX)?;
+        Ok(table
+            .get((owner_aid, topic))?
+            .map(|v| v.value().to_string()))
+    }
+
+    pub fn delete_broadcast_index(&self, owner_aid: &str, topic: &str) -> Result<(), DbError> {
+        let write_txn = self.inner.begin_write()?;
+        {
+            let mut table = write_txn.open_table(BROADCAST_INDEX)?;
+            table.remove((owner_aid, topic))?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    // --- Channel Invites ---
+
+    pub fn save_invite(
+        &self,
+        invited_aid: &str,
+        channel_said: &str,
+        invite_json: &str,
+    ) -> Result<(), DbError> {
+        let write_txn = self.inner.begin_write()?;
+        {
+            let mut table = write_txn.open_table(CHANNEL_INVITES)?;
+            table.insert((invited_aid, channel_said), invite_json)?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    /// Get all pending invites for an AID. Returns Vec of (channel_said, invite_json).
+    pub fn get_pending_invites(&self, invited_aid: &str) -> Result<Vec<(String, String)>, DbError> {
+        let read_txn = self.inner.begin_read()?;
+        let table = read_txn.open_table(CHANNEL_INVITES)?;
+        let mut results = Vec::new();
+
+        // Scan range: all entries where first key component is invited_aid
+        let range_start = (invited_aid, "");
+        let range_end = (invited_aid, "\x7f"); // ASCII DEL, sorts after all printable chars
+        for entry in table.range(range_start..range_end)? {
+            let (key, value) = entry?;
+            let (_, channel_said) = key.value();
+            results.push((channel_said.to_string(), value.value().to_string()));
+        }
+
+        Ok(results)
+    }
+
+    pub fn delete_invite(&self, invited_aid: &str, channel_said: &str) -> Result<(), DbError> {
+        let write_txn = self.inner.begin_write()?;
+        {
+            let mut table = write_txn.open_table(CHANNEL_INVITES)?;
+            table.remove((invited_aid, channel_said))?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    /// Atomic channel creation: saves channel metadata, broadcast index (if applicable), and invites in one transaction.
+    pub fn save_channel_with_invites(
+        &self,
+        said: &str,
+        metadata_json: &str,
+        broadcast_index: Option<(&str, &str)>, // (owner_aid, topic_name)
+        invites: &[(&str, &str)],              // (invited_aid, invite_json)
+    ) -> Result<(), DbError> {
+        let write_txn = self.inner.begin_write()?;
+        {
+            let mut channels = write_txn.open_table(CHANNELS)?;
+            channels.insert(said, metadata_json)?;
+
+            if let Some((owner_aid, topic)) = broadcast_index {
+                let mut idx = write_txn.open_table(BROADCAST_INDEX)?;
+                idx.insert((owner_aid, topic), said)?;
+            }
+
+            if !invites.is_empty() {
+                let mut inv_table = write_txn.open_table(CHANNEL_INVITES)?;
+                for (invited_aid, invite_json) in invites {
+                    inv_table.insert((*invited_aid, said), *invite_json)?;
+                }
+            }
+        }
+        write_txn.commit()?;
+        Ok(())
     }
 
     // --- Generic helpers for additional tables ---

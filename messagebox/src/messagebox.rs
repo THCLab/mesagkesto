@@ -15,8 +15,8 @@ use actix::{Actor, Addr};
 use tracing::{debug, info};
 
 use crate::{
-    acl::AclHandle, auth::AuthHandle, connection::ConnectionManager, db::Db,
-    mailbox::MailboxHandle, notifier::NotifyHandle, oobis::OobiHandle,
+    acl::AclHandle, auth::AuthHandle, channel::ChannelHandle, connection::ConnectionManager,
+    db::Db, mailbox::MailboxHandle, notifier::NotifyHandle, oobis::OobiHandle,
     responses_store::ResponsesHandle, storage::StorageHandle, validate::ValidateHandle,
     verify::VerifyHandle, MessageboxError,
 };
@@ -33,6 +33,8 @@ pub struct MessageBox {
     pub auth_handle: Option<AuthHandle>,
     pub mailbox_handle: MailboxHandle,
     pub acl_handle: AclHandle,
+    pub channel_handle: ChannelHandle,
+    pub storage_handle: StorageHandle,
     pub connection_manager: Addr<ConnectionManager>,
     pub jwt_secret: Option<String>,
 }
@@ -90,6 +92,7 @@ impl MessageBox {
 
         let mailbox_handle = MailboxHandle::new(db.clone());
         let acl_handle = AclHandle::new(db.clone());
+        let channel_handle = ChannelHandle::new(db.clone());
         let connection_manager = ConnectionManager::new().start();
         let auth_handle = if let Some(auth_dir) = dauthz_state_dir {
             let service_aid = IdentifierPrefix::Basic(id.clone()).to_string();
@@ -113,6 +116,7 @@ impl MessageBox {
             notify_handle,
             response_handle.clone(),
             acl_handle.clone(),
+            channel_handle.clone(),
         );
         debug!("Initializing verify handle");
         let verify_handle =
@@ -130,6 +134,8 @@ impl MessageBox {
             auth_handle,
             mailbox_handle,
             acl_handle,
+            channel_handle,
+            storage_handle,
             connection_manager,
             jwt_secret,
         })

@@ -12,15 +12,18 @@ cryptographic signatures against the sender's Key Event Log (KEL).
 ### Key Features
 
 - **KERI-native identity** — AIDs (Autonomous Identifiers) are first-class citizens
+- **Unified channel system** — four channel types: direct (1:1), broadcast (public 1:N), broadcast_private (1:N whitelisted), and group (N:N with creator/admin/member roles)
+- **Public broadcast channels** — RSS/Twitter-style feeds where an AID publishes authentic (CESR-signed) messages that anyone can subscribe to and verify
 - **DauthZ authentication** — challenge-response proof of AID ownership for mailbox provisioning
-- **MQTT integration (EMQX)** — issues JWTs for MQTT broker authentication; acts as auth bridge between KERI and EMQX
+- **MQTT integration (EMQX)** — issues JWTs for MQTT broker authentication; per-channel authorization via HTTP hook; anonymous subscribe for public broadcasts
 - **Persistent storage** — messages stored in embedded redb database, survive restarts
 - **Session management** — session tokens with expiry and revocation; MQTT JWTs issued alongside session tokens
 - **Mailbox lifecycle** — provision, activate, suspend, and delete mailboxes
 - **WebSocket real-time transport** — bidirectional messaging with presence and typing indicators (legacy, being replaced by MQTT)
 - **Contact list (ACL)** — per-mailbox sender whitelist; enforced both on HTTP endpoints and via EMQX authorization hook
-- **Firebase push notifications** — notify clients of new messages
+- **Firebase push notifications** — notify clients of new messages and channel events
 - **OOBI resolution** — discover and resolve identifier endpoints
+- **Broadcast demo page** — standalone HTML/JS viewer for public channels (no server required)
 
 ## Getting Started
 
@@ -124,13 +127,71 @@ Requires authentication (`Authorization: Bearer <token>`).
 | `PUT /mailbox/acl` | Set ACL whitelist tokens |
 | `GET /mailbox/acl` | Get ACL whitelist tokens |
 
+### Channel Endpoints
+
+#### Authenticated (requires `Authorization: Bearer <token>`)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET /channels` | List all channels the authenticated AID is a member of |
+| `GET /channels/pending` | List pending channel invites |
+| `GET /channels/{said}` | Get channel metadata and members (must be a member) |
+| `GET /channels/{said}/messages?s=N` | Get channel messages from sequence number N (must be a member) |
+
+#### Public (no authentication required)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET /broadcasts` | List all public broadcast channels on this instance |
+| `GET /broadcast/{aid}/{topic}` | Discover a broadcast channel by owner AID and topic name |
+| `GET /broadcast/{aid}/{topic}/messages?s=N` | Get public broadcast messages from sequence number N |
+
+#### Channel Operations via CESR
+
+All channel mutations are submitted as CESR-signed exchange messages through `POST /`. The sender's AID is extracted from the signature.
+
+| Route (`r` field) | Fields | Description |
+|--------------------|--------|-------------|
+| `/ch/create` | `channel_type`, `topic?`, `members[]` | Create a channel. Types: `direct`, `broadcast`, `broadcast_private`, `group` |
+| `/ch/msg` | `ch`, `a` | Send a message to a channel |
+| `/ch/invite` | `ch`, `to`, `role?` | Invite an AID to a channel (creator/admin only) |
+| `/ch/accept` | `ch` | Accept a channel invite |
+| `/ch/reject` | `ch` | Reject a channel invite |
+| `/ch/leave` | `ch` | Leave a channel (creator cannot leave) |
+| `/ch/remove` | `ch`, `target` | Remove a member (creator/admin only) |
+| `/ch/role` | `ch`, `target`, `role` | Set a member's role: `admin` or `member` (creator only) |
+| `/ch/sub` | `ch` | Subscribe to a public broadcast (no-op server-side, MQTT handles it) |
+
+#### Channel Types
+
+| Type | Writers | Readers | Encrypted | MQTT topic |
+|------|---------|---------|-----------|------------|
+| `direct` | Both members | Both members | Yes (client-side) | `ch/{said}/msg` |
+| `broadcast` | Creator only | Anyone | No (public, signed) | `ch/{said}/msg` (anonymous subscribe) |
+| `broadcast_private` | Creator only | Whitelisted AIDs | Yes (client-side) | `ch/{said}/msg` |
+| `group` | All members | All members | Yes (client-side) | `ch/{said}/msg` |
+
+#### Membership Roles
+
+- **Creator** — full control: delete channel, assign admins, invite/remove members
+- **Admin** — invite/remove members, moderate (designated by creator)
+- **Member** — read + write (group/direct) or read-only (broadcasts)
+
+Channel IDs are SAIDs (Self-Addressing Identifiers) — Blake3-256 hashes of the channel creation event, making them globally unique and content-addressable.
+
 ### MQTT Authorization Endpoint
 
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST /mqtt/authz` | EMQX HTTP authorization hook for sender-level ACL checks |
 
-This endpoint is called by EMQX on each PUBLISH to `msg/inbox/{recipient_aid}`. It checks the sender's `clientid` (AID) against the recipient's ACL whitelist. If the ACL is empty, the inbox is open (anyone can send). If the ACL has entries, only listed AIDs are permitted.
+This endpoint is called by EMQX on each PUBLISH/SUBSCRIBE to authorize access. It handles three topic patterns:
+
+- **`msg/inbox/{recipient_aid}`** (legacy) — checks sender ACL whitelist. Empty ACL = open inbox.
+- **`ch/{channel_said}/msg`** and **`ch/{channel_said}/meta`** — per-channel authorization:
+  - PUBLISH: broadcast channels allow only the creator; direct/group channels allow any active member
+  - SUBSCRIBE: public broadcasts allow anonymous subscribe; all other types require active membership
+- **`sys/inbox/{aid}`** — personal notification topic. Only the matching AID can subscribe; external publish is denied.
 
 Configure in EMQX as an HTTP authorization backend:
 
@@ -233,10 +294,14 @@ The service uses an **actor model** with tokio `mpsc`/`oneshot` channels. Each s
 HTTP ──────> AuthHandle (DauthZ challenge-response)
            > MailboxHandle (provisioning lifecycle)
            > AclHandle (whitelist token management)
+           > ChannelHandle (channel CRUD, membership, permissions)
            > MessageBox ──> VerifyHandle ──> ValidateHandle ──> StorageHandle (redb)
                                                              > NotifyHandle
+                                                             > ChannelHandle
                          > OobiHandle
                          > ResponsesHandle
+
+MQTT ──────> EMQX broker ──> mqtt_authz hook (per-channel authorization)
 
 WebSocket ─> ConnectionManager ──> WsSession(s)
                                  > Presence tracking
@@ -251,6 +316,25 @@ WebSocket ─> ConnectionManager ──> WsSession(s)
 - Messages are CESR-encoded JSON with attached cryptographic signatures
 - Verification requires the sender's OOBI to be resolved first (to fetch their KEL)
 - If KEL state is stale during verification, the message is queued for re-verification after updating from the watcher
+
+## Broadcast Demo Page
+
+A standalone HTML page for viewing public broadcast channels is included at `demo/broadcast.html`. No build step or server required — open it directly in a browser or host on any static file server.
+
+**Features:**
+- Discovers channels via `GET /broadcast/{aid}/{topic}`
+- Fetches message history via HTTP
+- Real-time updates via MQTT WebSocket (connects to EMQX anonymously)
+- Falls back to HTTP polling (30s) if MQTT is unavailable
+- Stores message history in IndexedDB for offline access
+
+**Usage:**
+
+Open directly and fill in the form, or pass URL parameters:
+
+```
+broadcast.html?url=http://localhost:3236&aid=EBilc4-...&topic=announcements&mqtt=ws://localhost:8083/mqtt
+```
 
 ## License
 

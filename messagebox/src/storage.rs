@@ -24,6 +24,23 @@ pub enum StorageMessage {
         digests: Vec<String>,
         sender: oneshot::Sender<Option<String>>,
     },
+    // Channel message operations
+    SaveChannelMessage {
+        channel_said: String,
+        digest: String,
+        message: Message,
+        sender: oneshot::Sender<u32>,
+    },
+    GetChannelBySn {
+        channel_said: String,
+        index: usize,
+        sender: oneshot::Sender<Option<String>>,
+    },
+    GetChannelByDigest {
+        channel_said: String,
+        digests: Vec<String>,
+        sender: oneshot::Sender<Option<String>>,
+    },
 }
 
 pub struct StorageActor {
@@ -114,6 +131,70 @@ impl StorageActor {
                 };
                 let _ = sender.send(result);
             }
+            StorageMessage::SaveChannelMessage {
+                channel_said,
+                digest,
+                message,
+                sender,
+            } => {
+                let msg_str = message.to_string();
+                debug!(channel = %channel_said, digest = %digest, msg_len = msg_str.len(), "Saving channel message");
+                match self.db.save_channel_message(&channel_said, &digest, &msg_str) {
+                    Ok(seq) => {
+                        info!(channel = %channel_said, digest = %digest, seq = seq, "Channel message saved");
+                        let _ = sender.send(1);
+                    }
+                    Err(e) => {
+                        warn!(channel = %channel_said, error = %e, "Failed to save channel message");
+                        let _ = sender.send(0);
+                    }
+                }
+            }
+            StorageMessage::GetChannelBySn {
+                channel_said,
+                index,
+                sender,
+            } => {
+                debug!(channel = %channel_said, index = index, "Getting channel messages by sn");
+                let result = match self.db.get_channel_messages_by_sn(&channel_said, index) {
+                    Ok(Some((last_sn, messages))) => {
+                        debug!(channel = %channel_said, last_sn = last_sn, count = messages.len(), "Got channel messages");
+                        let parsed: Vec<serde_json::Value> = messages
+                            .iter()
+                            .filter_map(|m| serde_json::from_str(m).ok())
+                            .collect();
+                        Some(json!({"last_sn": last_sn, "messages": parsed}).to_string())
+                    }
+                    Ok(None) => None,
+                    Err(e) => {
+                        warn!(channel = %channel_said, error = %e, "Failed to get channel messages");
+                        None
+                    }
+                };
+                let _ = sender.send(result);
+            }
+            StorageMessage::GetChannelByDigest {
+                channel_said,
+                digests,
+                sender,
+            } => {
+                debug!(channel = %channel_said, digest_count = digests.len(), "Getting channel messages by digest");
+                let result = match self.db.get_channel_messages_by_digest(&channel_said, &digests) {
+                    Ok(Some(messages)) => {
+                        let parsed: Vec<serde_json::Value> = messages
+                            .iter()
+                            .filter_map(|m| serde_json::from_str(m).ok())
+                            .collect();
+                        serde_json::to_string(&parsed).ok()
+                    }
+                    Ok(None) => None,
+                    Err(e) => {
+                        warn!(channel = %channel_said, error = %e, "Failed to get channel messages by digest");
+                        None
+                    }
+                };
+                let _ = sender.send(result);
+            }
         }
     }
 }
@@ -170,6 +251,51 @@ impl StorageHandle {
         let (send, recv) = oneshot::channel();
         let msg = StorageMessage::GetByDigest {
             key: id.to_string(),
+            digests,
+            sender: send,
+        };
+
+        let _ = self.database_sender.send(msg).await;
+        recv.await.expect("Actor task has been killed")
+    }
+
+    pub async fn save_channel(&self, channel_said: String, value: String, digest: String) -> u32 {
+        let (send, recv) = oneshot::channel();
+        let msg = StorageMessage::SaveChannelMessage {
+            channel_said,
+            digest,
+            message: json!(value),
+            sender: send,
+        };
+
+        let _ = self.database_sender.send(msg).await;
+        recv.await.expect("Actor task has been killed")
+    }
+
+    pub async fn get_channel_by_index(
+        &self,
+        channel_said: &str,
+        index: usize,
+    ) -> Option<String> {
+        let (send, recv) = oneshot::channel();
+        let msg = StorageMessage::GetChannelBySn {
+            channel_said: channel_said.to_string(),
+            index,
+            sender: send,
+        };
+
+        let _ = self.database_sender.send(msg).await;
+        recv.await.expect("Actor task has been killed")
+    }
+
+    pub async fn get_channel_by_digest(
+        &self,
+        channel_said: &str,
+        digests: Vec<String>,
+    ) -> Option<String> {
+        let (send, recv) = oneshot::channel();
+        let msg = StorageMessage::GetChannelByDigest {
+            channel_said: channel_said.to_string(),
             digests,
             sender: send,
         };

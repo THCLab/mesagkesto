@@ -4,8 +4,12 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, info, warn};
 
 use crate::{
-    acl::AclHandle, notifier::NotifyHandle, responses_store::ResponsesHandle,
-    storage::StorageHandle, MessageboxError,
+    acl::AclHandle,
+    channel::{ChannelHandle, ChannelType, MemberRole},
+    notifier::NotifyHandle,
+    responses_store::ResponsesHandle,
+    storage::StorageHandle,
+    MessageboxError,
 };
 
 #[derive(Serialize, Deserialize)]
@@ -44,6 +48,62 @@ pub enum ExchangeArguments {
         i: String,
         f: String,
     },
+    // Create a new channel
+    #[serde(rename = "/ch/create")]
+    ChannelCreate {
+        channel_type: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        topic: Option<String>,
+        #[serde(default)]
+        members: Vec<String>,
+    },
+    // Send a message to a channel
+    #[serde(rename = "/ch/msg")]
+    ChannelMsg {
+        ch: String,
+        a: String,
+    },
+    // Invite an AID to a channel
+    #[serde(rename = "/ch/invite")]
+    ChannelInvite {
+        ch: String,
+        to: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        role: Option<String>,
+    },
+    // Accept a channel invite
+    #[serde(rename = "/ch/accept")]
+    ChannelAccept {
+        ch: String,
+    },
+    // Reject a channel invite
+    #[serde(rename = "/ch/reject")]
+    ChannelReject {
+        ch: String,
+    },
+    // Leave a channel
+    #[serde(rename = "/ch/leave")]
+    ChannelLeave {
+        ch: String,
+    },
+    // Remove a member from a channel
+    #[serde(rename = "/ch/remove")]
+    ChannelRemove {
+        ch: String,
+        target: String,
+    },
+    // Set a member's role in a channel
+    #[serde(rename = "/ch/role")]
+    ChannelSetRole {
+        ch: String,
+        target: String,
+        role: String,
+    },
+    // Subscribe to a public broadcast channel
+    #[serde(rename = "/ch/sub")]
+    ChannelSubscribe {
+        ch: String,
+    },
 }
 
 pub enum ValidateMessage {
@@ -66,6 +126,7 @@ pub struct ValidateActor {
     notify: NotifyHandle,
     responses_handle: ResponsesHandle,
     acl: AclHandle,
+    channel: ChannelHandle,
 }
 
 impl ValidateActor {
@@ -75,6 +136,7 @@ impl ValidateActor {
         notify: NotifyHandle,
         responses: ResponsesHandle,
         acl: AclHandle,
+        channel: ChannelHandle,
     ) -> Self {
         ValidateActor {
             receiver,
@@ -82,6 +144,7 @@ impl ValidateActor {
             notify,
             responses_handle: responses,
             acl,
+            channel,
         }
     }
 
@@ -133,6 +196,135 @@ impl ValidateActor {
                     ExchangeArguments::SetFirebase { i, f: t } => {
                         info!(identifier = %i, "Registering Firebase token");
                         self.notify.save_token(i, t).await;
+                        Ok(None)
+                    }
+                    ExchangeArguments::ChannelCreate {
+                        channel_type,
+                        topic,
+                        members,
+                    } => {
+                        let sender_str = sender_aid
+                            .ok_or(MessageboxError::VerificationFailure)?
+                            .to_string();
+                        let ct = parse_channel_type(&channel_type)?;
+                        info!(creator = %sender_str, channel_type = %channel_type, "Creating channel");
+                        let channel = self
+                            .channel
+                            .create(sender_str, ct, topic, members)
+                            .await?;
+
+                        // Notify invited members
+                        for member in &channel.members {
+                            if member.status == crate::channel::MemberStatus::Invited {
+                                self.notify
+                                    .notify(member.aid.clone(), channel.said.clone())
+                                    .await;
+                            }
+                        }
+
+                        Ok(Some(serde_json::to_string(&channel).unwrap()))
+                    }
+                    ExchangeArguments::ChannelMsg { ch, a } => {
+                        let sender_str = sender_aid
+                            .ok_or(MessageboxError::VerificationFailure)?
+                            .to_string();
+                        let channel = self
+                            .channel
+                            .get(&ch)
+                            .await
+                            .ok_or(MessageboxError::UnknownMessage(
+                                "Channel not found".into(),
+                            ))?;
+
+                        // Check write permission
+                        if !channel.can_write(&sender_str) {
+                            warn!(sender = %sender_str, channel = %ch, "Channel write denied");
+                            return Err(MessageboxError::AclDenied(sender_str));
+                        }
+
+                        info!(channel = %ch, sender = %sender_str, msg_len = a.len(), "Channel message");
+                        let digest_algo: HashFunction = (HashFunctionCode::Blake3_256).into();
+                        let sai = digest_algo.derive(a.as_bytes()).to_string();
+                        self.storage
+                            .save_channel(ch.clone(), a, sai.clone())
+                            .await;
+
+                        // Notify active members (except sender)
+                        for member in &channel.members {
+                            if member.status == crate::channel::MemberStatus::Active
+                                && member.aid != sender_str
+                            {
+                                self.notify
+                                    .notify(member.aid.clone(), sai.clone())
+                                    .await;
+                            }
+                        }
+
+                        Ok(None)
+                    }
+                    ExchangeArguments::ChannelInvite { ch, to, role } => {
+                        let sender_str = sender_aid
+                            .ok_or(MessageboxError::VerificationFailure)?
+                            .to_string();
+                        let member_role = role
+                            .as_deref()
+                            .map(parse_member_role)
+                            .transpose()?
+                            .unwrap_or(MemberRole::Member);
+                        info!(channel = %ch, inviter = %sender_str, target = %to, "Channel invite");
+                        self.channel
+                            .invite(ch.clone(), sender_str, to.clone(), member_role)
+                            .await?;
+                        self.notify.notify(to, ch).await;
+                        Ok(None)
+                    }
+                    ExchangeArguments::ChannelAccept { ch } => {
+                        let sender_str = sender_aid
+                            .ok_or(MessageboxError::VerificationFailure)?
+                            .to_string();
+                        info!(channel = %ch, accepter = %sender_str, "Channel accept");
+                        self.channel.accept(ch, sender_str).await?;
+                        Ok(None)
+                    }
+                    ExchangeArguments::ChannelReject { ch } => {
+                        let sender_str = sender_aid
+                            .ok_or(MessageboxError::VerificationFailure)?
+                            .to_string();
+                        info!(channel = %ch, rejecter = %sender_str, "Channel reject");
+                        self.channel.reject(ch, sender_str).await?;
+                        Ok(None)
+                    }
+                    ExchangeArguments::ChannelLeave { ch } => {
+                        let sender_str = sender_aid
+                            .ok_or(MessageboxError::VerificationFailure)?
+                            .to_string();
+                        info!(channel = %ch, leaver = %sender_str, "Channel leave");
+                        self.channel.leave(ch, sender_str).await?;
+                        Ok(None)
+                    }
+                    ExchangeArguments::ChannelRemove { ch, target } => {
+                        let sender_str = sender_aid
+                            .ok_or(MessageboxError::VerificationFailure)?
+                            .to_string();
+                        info!(channel = %ch, remover = %sender_str, target = %target, "Channel remove");
+                        self.channel.remove(ch, sender_str, target).await?;
+                        Ok(None)
+                    }
+                    ExchangeArguments::ChannelSetRole { ch, target, role } => {
+                        let sender_str = sender_aid
+                            .ok_or(MessageboxError::VerificationFailure)?
+                            .to_string();
+                        let member_role = parse_member_role(&role)?;
+                        info!(channel = %ch, setter = %sender_str, target = %target, role = %role, "Channel set role");
+                        self.channel
+                            .set_role(ch, sender_str, target, member_role)
+                            .await?;
+                        Ok(None)
+                    }
+                    ExchangeArguments::ChannelSubscribe { ch } => {
+                        // For public broadcasts, subscription is handled by EMQX natively.
+                        // This is a no-op on the server side.
+                        debug!(channel = %ch, "Channel subscribe (no-op, handled by MQTT broker)");
                         Ok(None)
                     }
                 },
@@ -200,6 +392,7 @@ impl ValidateHandle {
         notify_handle: NotifyHandle,
         responses: ResponsesHandle,
         acl_handle: AclHandle,
+        channel_handle: ChannelHandle,
     ) -> Self {
         let (sender, receiver) = mpsc::channel(8);
         let actor = ValidateActor::new(
@@ -208,6 +401,7 @@ impl ValidateHandle {
             notify_handle,
             responses,
             acl_handle,
+            channel_handle,
         );
         tokio::spawn(run_my_actor(actor));
         debug!("Validate actor initialized");
@@ -249,5 +443,29 @@ impl ValidateHandle {
         // recv.await below. There's no reason to check for the
         // same failure twice.
         let _ = self.validate_sender.send(msg).await;
+    }
+}
+
+fn parse_channel_type(s: &str) -> Result<ChannelType, MessageboxError> {
+    match s {
+        "direct" => Ok(ChannelType::Direct),
+        "broadcast" => Ok(ChannelType::Broadcast),
+        "broadcast_private" => Ok(ChannelType::BroadcastPrivate),
+        "group" => Ok(ChannelType::Group),
+        _ => Err(MessageboxError::Unparsable(format!(
+            "Unknown channel type: {}",
+            s
+        ))),
+    }
+}
+
+fn parse_member_role(s: &str) -> Result<MemberRole, MessageboxError> {
+    match s {
+        "admin" => Ok(MemberRole::Admin),
+        "member" => Ok(MemberRole::Member),
+        _ => Err(MessageboxError::Unparsable(format!(
+            "Unknown member role: {}",
+            s
+        ))),
     }
 }

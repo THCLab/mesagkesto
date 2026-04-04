@@ -83,6 +83,36 @@ impl MessageBoxListener {
                     "/mqtt/authz",
                     actix_web::web::post().to(http_handlers::mqtt_authz),
                 )
+                // Channel endpoints (authenticated)
+                .route(
+                    "/channels",
+                    actix_web::web::get().to(http_handlers::list_channels),
+                )
+                .route(
+                    "/channels/pending",
+                    actix_web::web::get().to(http_handlers::pending_invites),
+                )
+                .route(
+                    "/channels/{said}",
+                    actix_web::web::get().to(http_handlers::get_channel),
+                )
+                .route(
+                    "/channels/{said}/messages",
+                    actix_web::web::get().to(http_handlers::get_channel_messages),
+                )
+                // Broadcast endpoints (public, no auth)
+                .route(
+                    "/broadcasts",
+                    actix_web::web::get().to(http_handlers::list_broadcasts),
+                )
+                .route(
+                    "/broadcast/{aid}/{topic}",
+                    actix_web::web::get().to(http_handlers::discover_broadcast),
+                )
+                .route(
+                    "/broadcast/{aid}/{topic}/messages",
+                    actix_web::web::get().to(http_handlers::get_broadcast_messages),
+                )
         })
         .bind(addr)?
         .run())
@@ -619,6 +649,233 @@ mod http_handlers {
         Ok(HttpResponse::Ok().json(serde_json::json!({"tokens": tokens})))
     }
 
+    // --- Channel endpoints ---
+
+    #[derive(serde::Deserialize)]
+    pub struct ChannelMessagesQuery {
+        s: Option<usize>,
+    }
+
+    /// List all channels the authenticated user is a member of.
+    pub async fn list_channels(
+        req: actix_web::HttpRequest,
+        data: web::Data<Arc<MessageBox>>,
+    ) -> Result<HttpResponse, ApiError> {
+        debug!("GET /channels");
+        let auth = data
+            .auth_handle
+            .as_ref()
+            .ok_or(ApiError::AuthNotConfigured)?;
+        let token = req
+            .headers()
+            .get("Authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .ok_or(ApiError::Unauthorized)?;
+
+        let session = auth
+            .validate_session(token)
+            .await
+            .ok_or(ApiError::Unauthorized)?;
+        let channels = data.channel_handle.list_for_aid(&session.aid).await;
+        debug!(aid = %session.aid, count = channels.len(), "GET /channels -> 200");
+        Ok(HttpResponse::Ok().json(channels))
+    }
+
+    /// List pending channel invites for the authenticated user.
+    pub async fn pending_invites(
+        req: actix_web::HttpRequest,
+        data: web::Data<Arc<MessageBox>>,
+    ) -> Result<HttpResponse, ApiError> {
+        debug!("GET /channels/pending");
+        let auth = data
+            .auth_handle
+            .as_ref()
+            .ok_or(ApiError::AuthNotConfigured)?;
+        let token = req
+            .headers()
+            .get("Authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .ok_or(ApiError::Unauthorized)?;
+
+        let session = auth
+            .validate_session(token)
+            .await
+            .ok_or(ApiError::Unauthorized)?;
+        let invites = data
+            .channel_handle
+            .get_pending_invites(&session.aid)
+            .await;
+        debug!(aid = %session.aid, count = invites.len(), "GET /channels/pending -> 200");
+        Ok(HttpResponse::Ok().json(invites))
+    }
+
+    /// Get channel metadata by SAID (authenticated, must be member).
+    pub async fn get_channel(
+        said: web::Path<String>,
+        req: actix_web::HttpRequest,
+        data: web::Data<Arc<MessageBox>>,
+    ) -> Result<HttpResponse, ApiError> {
+        let said = said.into_inner();
+        debug!(said = %said, "GET /channels/said");
+        let auth = data
+            .auth_handle
+            .as_ref()
+            .ok_or(ApiError::AuthNotConfigured)?;
+        let token = req
+            .headers()
+            .get("Authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .ok_or(ApiError::Unauthorized)?;
+
+        let session = auth
+            .validate_session(token)
+            .await
+            .ok_or(ApiError::Unauthorized)?;
+
+        let channel = data
+            .channel_handle
+            .get(&said)
+            .await
+            .ok_or(ApiError::MessageboxError(
+                crate::MessageboxError::UnknownMessage("Channel not found".into()),
+            ))?;
+
+        // Check read permission
+        if !channel.can_read(&session.aid) {
+            return Err(ApiError::Unauthorized);
+        }
+
+        Ok(HttpResponse::Ok().json(channel))
+    }
+
+    /// Get channel messages by sequence number (authenticated, must be member).
+    pub async fn get_channel_messages(
+        said: web::Path<String>,
+        query: web::Query<ChannelMessagesQuery>,
+        req: actix_web::HttpRequest,
+        data: web::Data<Arc<MessageBox>>,
+    ) -> Result<HttpResponse, ApiError> {
+        let said = said.into_inner();
+        let from_sn = query.s.unwrap_or(0);
+        debug!(said = %said, from_sn = from_sn, "GET /channels/said/messages");
+
+        let auth = data
+            .auth_handle
+            .as_ref()
+            .ok_or(ApiError::AuthNotConfigured)?;
+        let token = req
+            .headers()
+            .get("Authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .ok_or(ApiError::Unauthorized)?;
+
+        let session = auth
+            .validate_session(token)
+            .await
+            .ok_or(ApiError::Unauthorized)?;
+
+        let channel = data
+            .channel_handle
+            .get(&said)
+            .await
+            .ok_or(ApiError::MessageboxError(
+                crate::MessageboxError::UnknownMessage("Channel not found".into()),
+            ))?;
+
+        if !channel.can_read(&session.aid) {
+            return Err(ApiError::Unauthorized);
+        }
+
+        match data
+            .storage_handle
+            .get_channel_by_index(&said, from_sn)
+            .await
+        {
+            Some(messages) => Ok(HttpResponse::Ok()
+                .content_type(actix_web::http::header::ContentType::json())
+                .body(messages)),
+            None => Ok(HttpResponse::Ok().json(serde_json::json!({"last_sn": null, "messages": []}))),
+        }
+    }
+
+    /// List all public broadcast channels on this instance (no auth).
+    pub async fn list_broadcasts(
+        data: web::Data<Arc<MessageBox>>,
+    ) -> Result<HttpResponse, ApiError> {
+        debug!("GET /broadcasts");
+        let all = data.channel_handle.list_all().await;
+        let broadcasts: Vec<_> = all
+            .into_iter()
+            .filter(|ch| {
+                ch.channel_type == crate::channel::ChannelType::Broadcast
+            })
+            .collect();
+        debug!(count = broadcasts.len(), "GET /broadcasts -> 200");
+        Ok(HttpResponse::Ok().json(broadcasts))
+    }
+
+    /// Discover a broadcast channel by owner AID and topic name (no auth).
+    pub async fn discover_broadcast(
+        path: web::Path<(String, String)>,
+        data: web::Data<Arc<MessageBox>>,
+    ) -> Result<HttpResponse, ApiError> {
+        let (aid, topic) = path.into_inner();
+        debug!(aid = %aid, topic = %topic, "GET /broadcast/aid/topic");
+
+        let channel = data
+            .channel_handle
+            .get_by_topic(&aid, &topic)
+            .await
+            .ok_or(ApiError::MessageboxError(
+                crate::MessageboxError::UnknownMessage("Broadcast not found".into()),
+            ))?;
+
+        // Only expose public broadcasts
+        if channel.channel_type != crate::channel::ChannelType::Broadcast {
+            return Err(ApiError::Unauthorized);
+        }
+
+        Ok(HttpResponse::Ok().json(channel))
+    }
+
+    /// Get public broadcast messages (no auth required).
+    pub async fn get_broadcast_messages(
+        path: web::Path<(String, String)>,
+        query: web::Query<ChannelMessagesQuery>,
+        data: web::Data<Arc<MessageBox>>,
+    ) -> Result<HttpResponse, ApiError> {
+        let (aid, topic) = path.into_inner();
+        let from_sn = query.s.unwrap_or(0);
+        debug!(aid = %aid, topic = %topic, from_sn = from_sn, "GET /broadcast/aid/topic/messages");
+
+        let channel = data
+            .channel_handle
+            .get_by_topic(&aid, &topic)
+            .await
+            .ok_or(ApiError::MessageboxError(
+                crate::MessageboxError::UnknownMessage("Broadcast not found".into()),
+            ))?;
+
+        if channel.channel_type != crate::channel::ChannelType::Broadcast {
+            return Err(ApiError::Unauthorized);
+        }
+
+        match data
+            .storage_handle
+            .get_channel_by_index(&channel.said, from_sn)
+            .await
+        {
+            Some(messages) => Ok(HttpResponse::Ok()
+                .content_type(actix_web::http::header::ContentType::json())
+                .body(messages)),
+            None => Ok(HttpResponse::Ok().json(serde_json::json!({"last_sn": null, "messages": []}))),
+        }
+    }
+
     /// EMQX HTTP authorization hook.
     /// Called by EMQX on each PUBLISH to check sender-level ACL.
     /// Only enforces ACL for publishes to `msg/inbox/{recipient_aid}`.
@@ -641,23 +898,64 @@ mod http_handlers {
             "POST /mqtt/authz"
         );
 
-        // Only enforce ACL for publish to inbox topics
-        if req.action == "publish" {
-            if let Some(recipient_aid) = req.topic.strip_prefix("msg/inbox/") {
-                let acl_tokens = data.acl_handle.get_tokens(recipient_aid).await;
-                // Empty ACL = open inbox (anyone can send)
-                if !acl_tokens.is_empty() && !acl_tokens.contains(&req.clientid) {
-                    debug!(
-                        sender = %req.clientid,
-                        recipient = %recipient_aid,
-                        "MQTT authz denied: sender not in ACL"
-                    );
-                    return Ok(HttpResponse::Ok().json(serde_json::json!({"result": "deny"})));
+        let allow = || HttpResponse::Ok().json(serde_json::json!({"result": "allow"}));
+        let deny = || HttpResponse::Ok().json(serde_json::json!({"result": "deny"}));
+
+        // Legacy inbox topic (kept for backward compat)
+        if req.topic.starts_with("msg/inbox/") {
+            if req.action == "publish" {
+                if let Some(recipient_aid) = req.topic.strip_prefix("msg/inbox/") {
+                    let acl_tokens = data.acl_handle.get_tokens(recipient_aid).await;
+                    if !acl_tokens.is_empty() && !acl_tokens.contains(&req.clientid) {
+                        debug!(sender = %req.clientid, recipient = %recipient_aid, "MQTT authz denied: ACL");
+                        return Ok(deny());
+                    }
+                }
+            }
+            return Ok(allow());
+        }
+
+        // Channel topics: ch/{said}/msg or ch/{said}/meta
+        if let Some(rest) = req.topic.strip_prefix("ch/") {
+            if let Some((channel_said, sub_topic)) = rest.split_once('/') {
+                if let Some(channel) = data.channel_handle.get(channel_said).await {
+                    match (req.action.as_str(), sub_topic) {
+                        ("publish", "msg") => {
+                            // Check write permission
+                            if channel.can_write(&req.clientid) {
+                                return Ok(allow());
+                            }
+                            debug!(sender = %req.clientid, channel = %channel_said, "MQTT authz denied: no write permission");
+                            return Ok(deny());
+                        }
+                        ("subscribe", "msg") | ("subscribe", "meta") => {
+                            // Public broadcasts allow anonymous subscribe
+                            if channel.can_read(&req.clientid) {
+                                return Ok(allow());
+                            }
+                            debug!(sender = %req.clientid, channel = %channel_said, "MQTT authz denied: no read permission");
+                            return Ok(deny());
+                        }
+                        _ => {}
+                    }
+                } else {
+                    debug!(channel = %channel_said, "MQTT authz denied: channel not found");
+                    return Ok(deny());
                 }
             }
         }
 
-        Ok(HttpResponse::Ok().json(serde_json::json!({"result": "allow"})))
+        // Personal notification topic: sys/inbox/{aid}
+        if let Some(aid) = req.topic.strip_prefix("sys/inbox/") {
+            if req.action == "subscribe" && req.clientid == aid {
+                return Ok(allow());
+            }
+            // Deny publish to sys/inbox (server-internal only) and subscribe to others' inboxes
+            return Ok(deny());
+        }
+
+        // Default deny for unknown topics
+        Ok(deny())
     }
 }
 
