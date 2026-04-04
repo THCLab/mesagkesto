@@ -1,5 +1,7 @@
+use chrono::Utc;
 use keri_sdk::keri_core::actor::prelude::{HashFunction, HashFunctionCode};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, info, warn};
 
@@ -245,8 +247,15 @@ impl ValidateActor {
                         info!(channel = %ch, sender = %sender_str, msg_len = a.len(), "Channel message");
                         let digest_algo: HashFunction = (HashFunctionCode::Blake3_256).into();
                         let sai = digest_algo.derive(a.as_bytes()).to_string();
+                        // Store structured message with sender metadata
+                        let structured_msg = json!({
+                            "sender": sender_str,
+                            "content": a,
+                            "ts": Utc::now().to_rfc3339(),
+                            "digest": sai,
+                        });
                         self.storage
-                            .save_channel(ch.clone(), a, sai.clone())
+                            .save_channel(ch.clone(), structured_msg.to_string(), sai.clone())
                             .await;
 
                         // Notify active members (except sender)

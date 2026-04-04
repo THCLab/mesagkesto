@@ -261,10 +261,12 @@ impl StorageHandle {
 
     pub async fn save_channel(&self, channel_said: String, value: String, digest: String) -> u32 {
         let (send, recv) = oneshot::channel();
+        // Parse value as JSON object; fall back to wrapping as string if not valid JSON
+        let message = serde_json::from_str(&value).unwrap_or_else(|_| json!(value));
         let msg = StorageMessage::SaveChannelMessage {
             channel_said,
             digest,
-            message: json!(value),
+            message,
             sender: send,
         };
 
