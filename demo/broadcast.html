@@ -1,0 +1,907 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mesagkesto Broadcast</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #000;
+            color: #e7e9ea;
+            min-height: 100vh;
+        }
+
+        /* Layout */
+        .layout {
+            max-width: 600px;
+            margin: 0 auto;
+            border-left: 1px solid #2f3336;
+            border-right: 1px solid #2f3336;
+            min-height: 100vh;
+        }
+
+        /* Top bar */
+        .top-bar {
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            background: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid #2f3336;
+            padding: 12px 16px;
+        }
+        .top-bar h1 {
+            font-size: 20px;
+            font-weight: 700;
+        }
+        .top-bar .subtitle {
+            font-size: 13px;
+            color: #71767b;
+            margin-top: 2px;
+        }
+        .top-bar .connection-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: #71767b;
+            margin-top: 6px;
+            padding: 2px 10px;
+            border-radius: 12px;
+            background: #16181c;
+        }
+        .connection-dot {
+            width: 6px; height: 6px;
+            border-radius: 50%;
+        }
+        .connection-dot.connected { background: #00ba7c; }
+        .connection-dot.disconnected { background: #f4212e; }
+        .connection-dot.polling { background: #ffd400; }
+
+        /* Setup form */
+        .setup {
+            padding: 32px 16px;
+        }
+        .setup h2 {
+            font-size: 23px;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+        .setup p {
+            color: #71767b;
+            font-size: 15px;
+            margin-bottom: 24px;
+        }
+        .form-group {
+            margin-bottom: 16px;
+        }
+        .form-group label {
+            display: block;
+            font-size: 13px;
+            color: #71767b;
+            margin-bottom: 4px;
+        }
+        .form-group input {
+            width: 100%;
+            padding: 12px;
+            background: #000;
+            border: 1px solid #333639;
+            border-radius: 4px;
+            color: #e7e9ea;
+            font-size: 15px;
+            transition: border-color 0.2s;
+        }
+        .form-group input:focus {
+            outline: none;
+            border-color: #1d9bf0;
+        }
+        .btn-primary {
+            width: 100%;
+            padding: 12px;
+            background: #e7e9ea;
+            color: #0f1419;
+            border: none;
+            border-radius: 9999px;
+            font-size: 15px;
+            font-weight: 700;
+            cursor: pointer;
+            margin-top: 8px;
+            transition: background 0.2s;
+        }
+        .btn-primary:hover { background: #d7dbdc; }
+
+        /* Channel header / profile area */
+        .channel-profile {
+            padding: 16px;
+            border-bottom: 1px solid #2f3336;
+        }
+        .channel-avatar {
+            width: 48px; height: 48px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #1d9bf0, #1a8cd8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            font-weight: 700;
+            color: #fff;
+            margin-bottom: 12px;
+        }
+        .channel-profile h2 {
+            font-size: 20px;
+            font-weight: 700;
+        }
+        .channel-profile .handle {
+            color: #71767b;
+            font-size: 15px;
+        }
+        .channel-profile .bio {
+            margin-top: 12px;
+            font-size: 15px;
+            line-height: 1.4;
+        }
+        .channel-meta {
+            display: flex;
+            gap: 16px;
+            margin-top: 12px;
+            font-size: 13px;
+            color: #71767b;
+            flex-wrap: wrap;
+        }
+        .channel-meta .label { color: #71767b; }
+        .channel-meta .value {
+            font-family: monospace;
+            font-size: 12px;
+            max-width: 180px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            border-bottom: 1px solid #2f3336;
+        }
+        .tab {
+            flex: 1;
+            padding: 16px;
+            text-align: center;
+            font-size: 15px;
+            font-weight: 700;
+            color: #71767b;
+            cursor: pointer;
+            position: relative;
+            transition: background 0.2s;
+        }
+        .tab:hover { background: rgba(231, 233, 234, 0.03); }
+        .tab.active {
+            color: #e7e9ea;
+        }
+        .tab.active::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 56px;
+            height: 4px;
+            border-radius: 2px;
+            background: #1d9bf0;
+        }
+
+        /* Controls bar */
+        .controls-bar {
+            display: flex;
+            justify-content: flex-end;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            border-bottom: 1px solid #2f3336;
+        }
+        .btn-icon {
+            background: none;
+            border: 1px solid #333639;
+            border-radius: 9999px;
+            color: #e7e9ea;
+            cursor: pointer;
+            padding: 6px 14px;
+            font-size: 13px;
+            transition: background 0.2s;
+        }
+        .btn-icon:hover { background: rgba(239, 243, 244, 0.1); }
+        .btn-danger { color: #f4212e; border-color: #67070f; }
+        .btn-danger:hover { background: rgba(244, 33, 46, 0.1); }
+
+        /* Tweet / Post */
+        .post {
+            padding: 12px 16px;
+            border-bottom: 1px solid #2f3336;
+            display: flex;
+            gap: 12px;
+            transition: background 0.2s;
+            cursor: default;
+        }
+        .post:hover { background: rgba(231, 233, 234, 0.03); }
+
+        .post-avatar {
+            flex-shrink: 0;
+            width: 40px; height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            font-weight: 700;
+            color: #fff;
+        }
+
+        .post-body { flex: 1; min-width: 0; }
+
+        .post-header {
+            display: flex;
+            align-items: baseline;
+            gap: 4px;
+            flex-wrap: wrap;
+        }
+        .post-name {
+            font-weight: 700;
+            font-size: 15px;
+            color: #e7e9ea;
+        }
+        .post-aid {
+            color: #71767b;
+            font-size: 13px;
+            font-family: monospace;
+            max-width: 140px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .post-sep { color: #71767b; font-size: 13px; }
+        .post-time {
+            color: #71767b;
+            font-size: 13px;
+        }
+        .post-time:hover { text-decoration: underline; }
+
+        .post-content {
+            margin-top: 4px;
+            font-size: 15px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+        }
+        .post-content a {
+            color: #1d9bf0;
+            text-decoration: none;
+        }
+        .post-content a:hover { text-decoration: underline; }
+
+        /* Embedded links / cards */
+        .link-card {
+            margin-top: 12px;
+            border: 1px solid #2f3336;
+            border-radius: 16px;
+            overflow: hidden;
+            transition: background 0.2s;
+        }
+        .link-card:hover { background: rgba(231, 233, 234, 0.03); }
+        .link-card-body {
+            padding: 12px;
+        }
+        .link-card-domain {
+            font-size: 13px;
+            color: #71767b;
+        }
+        .link-card-title {
+            font-size: 15px;
+            color: #e7e9ea;
+            margin-top: 2px;
+        }
+
+        .post-actions {
+            display: flex;
+            gap: 0;
+            margin-top: 12px;
+            max-width: 350px;
+        }
+        .post-action {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            color: #71767b;
+            font-size: 13px;
+            cursor: default;
+            padding: 0;
+            background: none;
+            border: none;
+        }
+        .post-action svg {
+            width: 18px; height: 18px;
+            fill: none;
+            stroke: currentColor;
+            stroke-width: 1.5;
+        }
+
+        .post-digest {
+            margin-top: 4px;
+            font-size: 11px;
+            color: #333639;
+            font-family: monospace;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .post-digest:hover { color: #71767b; }
+
+        /* Sequence number badge */
+        .sn-badge {
+            font-size: 11px;
+            color: #71767b;
+            background: #16181c;
+            padding: 1px 6px;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 64px 16px;
+            color: #71767b;
+        }
+        .empty-state h3 {
+            font-size: 20px;
+            font-weight: 700;
+            color: #e7e9ea;
+            margin-bottom: 8px;
+        }
+
+        /* Loading spinner */
+        .spinner {
+            display: inline-block;
+            width: 24px; height: 24px;
+            border: 3px solid #2f3336;
+            border-top-color: #1d9bf0;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* New posts indicator */
+        .new-posts-bar {
+            padding: 16px;
+            text-align: center;
+            border-bottom: 1px solid #2f3336;
+            color: #1d9bf0;
+            font-size: 13px;
+            cursor: pointer;
+            display: none;
+        }
+        .new-posts-bar:hover { background: rgba(29, 155, 240, 0.04); }
+
+        /* Channel banner */
+        .channel-banner {
+            height: 200px;
+            background-size: cover;
+            background-position: center;
+            background-color: #1d1f23;
+            display: none;
+        }
+        .channel-avatar img {
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            object-fit: cover;
+        }
+        .post-avatar img {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            object-fit: cover;
+        }
+
+        /* Avatar color palette */
+        .avatar-0 { background: #1d9bf0; }
+        .avatar-1 { background: #00ba7c; }
+        .avatar-2 { background: #ffd400; }
+        .avatar-3 { background: #f91880; }
+        .avatar-4 { background: #7856ff; }
+        .avatar-5 { background: #ff7a00; }
+
+        @media (max-width: 600px) {
+            .layout { border: none; }
+        }
+    </style>
+</head>
+<body>
+    <div class="layout">
+        <!-- Setup form -->
+        <div id="setup" class="setup">
+            <h2>Connect to a broadcast</h2>
+            <p>Subscribe to a public Mesagkesto broadcast channel and view messages in real-time.</p>
+            <div class="form-group">
+                <label>Server URL</label>
+                <input type="text" id="serverUrl" placeholder="http://localhost:3236" />
+            </div>
+            <div class="form-group">
+                <label>Channel Owner AID</label>
+                <input type="text" id="ownerAid" placeholder="EBilc4-L3tFUnfM_wJr4S4OJanAv_VmF_dJNN6vkf2Ha" />
+            </div>
+            <div class="form-group">
+                <label>Topic</label>
+                <input type="text" id="topicName" placeholder="announcements" />
+            </div>
+            <div class="form-group">
+                <label>MQTT WebSocket URL (optional)</label>
+                <input type="text" id="mqttUrl" placeholder="ws://localhost:8083/mqtt" />
+            </div>
+            <button class="btn-primary" onclick="connect()">Subscribe</button>
+        </div>
+
+        <!-- Channel view -->
+        <div id="channelView" style="display: none;">
+            <!-- Top bar -->
+            <div class="top-bar">
+                <h1 id="channelTitle">Loading...</h1>
+                <div class="subtitle" id="channelSubtitle"></div>
+                <div class="connection-pill">
+                    <span class="connection-dot" id="statusDot"></span>
+                    <span id="statusText">Connecting...</span>
+                </div>
+            </div>
+
+            <!-- Channel banner -->
+            <div class="channel-banner" id="channelBanner"></div>
+
+            <!-- Channel profile -->
+            <div class="channel-profile">
+                <div class="channel-avatar" id="channelAvatar">B</div>
+                <h2 id="profileName">Channel</h2>
+                <div class="handle" id="profileHandle">@channel</div>
+                <div class="bio" id="profileBio"></div>
+                <div class="channel-meta">
+                    <span><span class="label">SAID:</span> <span class="value" id="channelSaid"></span></span>
+                    <span><span class="label">Owner:</span> <span class="value" id="channelOwner"></span></span>
+                </div>
+            </div>
+
+            <!-- Tabs -->
+            <div class="tabs">
+                <div class="tab active">Posts</div>
+            </div>
+
+            <!-- Controls -->
+            <div class="controls-bar">
+                <span id="lastUpdated" style="font-size: 13px; color: #71767b;"></span>
+                <button class="btn-icon" onclick="refresh()">Refresh</button>
+                <button class="btn-icon btn-danger" onclick="disconnect()">Disconnect</button>
+            </div>
+
+            <!-- Posts feed -->
+            <div id="messageList">
+                <div class="empty-state">
+                    <h3>No posts yet</h3>
+                    <p>When messages are published, they'll show up here.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MQTT.js from CDN -->
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+
+    <script>
+        let state = {
+            serverUrl: '',
+            ownerAid: '',
+            topic: '',
+            mqttUrl: '',
+            channelSaid: null,
+            channel: null,
+            messages: [],
+            lastSn: -1,
+            mqttClient: null,
+            pollInterval: null,
+        };
+
+        // ---- IndexedDB ----
+        const DB_NAME = 'mesagkesto_broadcast';
+        const DB_VERSION = 1;
+
+        function openDb() {
+            return new Promise((resolve, reject) => {
+                const req = indexedDB.open(DB_NAME, DB_VERSION);
+                req.onupgradeneeded = (e) => {
+                    const db = e.target.result;
+                    if (!db.objectStoreNames.contains('messages')) {
+                        db.createObjectStore('messages', { keyPath: ['channelSaid', 'sn'] });
+                    }
+                    if (!db.objectStoreNames.contains('state')) {
+                        db.createObjectStore('state', { keyPath: 'key' });
+                    }
+                };
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => reject(req.error);
+            });
+        }
+
+        async function saveMessages(channelSaid, messages, startSn) {
+            const db = await openDb();
+            const tx = db.transaction('messages', 'readwrite');
+            const store = tx.objectStore('messages');
+            messages.forEach((msg, i) => {
+                store.put({ channelSaid, sn: startSn + i, data: msg });
+            });
+        }
+
+        async function loadCachedMessages(channelSaid) {
+            const db = await openDb();
+            return new Promise((resolve) => {
+                const tx = db.transaction('messages', 'readonly');
+                const store = tx.objectStore('messages');
+                const results = [];
+                const req = store.openCursor();
+                req.onsuccess = (e) => {
+                    const cursor = e.target.result;
+                    if (cursor) {
+                        if (cursor.value.channelSaid === channelSaid) {
+                            results.push(cursor.value);
+                        }
+                        cursor.continue();
+                    } else {
+                        resolve(results.sort((a, b) => a.sn - b.sn));
+                    }
+                };
+                req.onerror = () => resolve([]);
+            });
+        }
+
+        // ---- URL params ----
+        function loadFromUrl() {
+            const params = new URLSearchParams(window.location.search);
+            if (params.get('url')) document.getElementById('serverUrl').value = params.get('url');
+            if (params.get('aid')) document.getElementById('ownerAid').value = params.get('aid');
+            if (params.get('topic')) document.getElementById('topicName').value = params.get('topic');
+            if (params.get('mqtt')) document.getElementById('mqttUrl').value = params.get('mqtt');
+            if (params.get('url') && params.get('aid') && params.get('topic')) {
+                connect();
+            }
+        }
+
+        // ---- Connect ----
+        async function connect() {
+            state.serverUrl = document.getElementById('serverUrl').value.replace(/\/$/, '');
+            state.ownerAid = document.getElementById('ownerAid').value.trim();
+            state.topic = document.getElementById('topicName').value.trim();
+            state.mqttUrl = document.getElementById('mqttUrl').value.trim();
+
+            if (!state.serverUrl || !state.ownerAid || !state.topic) {
+                alert('Please fill in Server URL, Owner AID, and Topic Name');
+                return;
+            }
+
+            document.getElementById('setup').style.display = 'none';
+            document.getElementById('channelView').style.display = 'block';
+            setStatus('polling', 'Fetching channel...');
+
+            try {
+                const resp = await fetch(`${state.serverUrl}/broadcast/${encodeURIComponent(state.ownerAid)}/${encodeURIComponent(state.topic)}`);
+                if (!resp.ok) throw new Error(`Channel not found (${resp.status})`);
+                state.channel = await resp.json();
+                state.channelSaid = state.channel.said;
+
+                // Update profile
+                const topicName = state.channel.topic || 'Untitled Channel';
+                document.getElementById('channelTitle').textContent = topicName;
+                document.getElementById('channelSubtitle').textContent = `@${state.topic}`;
+                document.getElementById('profileName').textContent = topicName;
+                document.getElementById('profileHandle').textContent = `@${state.topic}`;
+                document.getElementById('profileBio').textContent = state.channel.description || '';
+                document.getElementById('channelOwner').textContent = state.channel.creator;
+                document.getElementById('channelSaid').textContent = state.channel.said;
+                document.title = `${topicName} - Mesagkesto`;
+
+                // Avatar
+                const avatarEl = document.getElementById('channelAvatar');
+                const initial = topicName.charAt(0).toUpperCase();
+                if (state.channel.avatar) {
+                    avatarEl.innerHTML = `<img src="${state.serverUrl}/vault/${state.channel.avatar}" onerror="this.parentElement.textContent='${initial}'" />`;
+                } else {
+                    avatarEl.textContent = initial;
+                }
+
+                // Background banner
+                if (state.channel.background) {
+                    const banner = document.getElementById('channelBanner');
+                    banner.style.backgroundImage = `url(${state.serverUrl}/vault/${state.channel.background})`;
+                    banner.style.display = 'block';
+                }
+
+                // Load cached
+                const cached = await loadCachedMessages(state.channelSaid);
+                if (cached.length > 0) {
+                    state.messages = cached.map(c => c.data);
+                    state.lastSn = cached[cached.length - 1].sn;
+                    renderMessages();
+                }
+
+                await fetchMessages();
+
+                if (state.mqttUrl) {
+                    connectMqtt();
+                } else {
+                    startPolling();
+                }
+            } catch (e) {
+                setStatus('disconnected', `Error: ${e.message}`);
+            }
+        }
+
+        // ---- Fetch ----
+        async function fetchMessages() {
+            try {
+                const fromSn = state.lastSn + 1;
+                const resp = await fetch(`${state.serverUrl}/broadcast/${encodeURIComponent(state.ownerAid)}/${encodeURIComponent(state.topic)}/messages?s=${fromSn}`);
+                if (!resp.ok) return;
+                const data = await resp.json();
+
+                if (data.messages && data.messages.length > 0) {
+                    await saveMessages(state.channelSaid, data.messages, fromSn);
+                    state.messages.push(...data.messages);
+                    if (data.last_sn !== null && data.last_sn !== undefined) {
+                        state.lastSn = data.last_sn;
+                    }
+                    renderMessages();
+                }
+
+                document.getElementById('lastUpdated').textContent = new Date().toLocaleTimeString();
+            } catch (e) {
+                console.error('Fetch error:', e);
+            }
+        }
+
+        // ---- MQTT ----
+        function connectMqtt() {
+            if (!state.mqttUrl || !state.channelSaid) return;
+            setStatus('polling', 'Connecting to MQTT...');
+
+            try {
+                state.mqttClient = mqtt.connect(state.mqttUrl, {
+                    clean: true,
+                    connectTimeout: 10000,
+                });
+
+                state.mqttClient.on('connect', () => {
+                    const topic = `ch/${state.channelSaid}/msg`;
+                    state.mqttClient.subscribe(topic, (err) => {
+                        if (err) {
+                            setStatus('disconnected', 'MQTT subscribe failed');
+                            startPolling();
+                        } else {
+                            setStatus('connected', 'Live');
+                        }
+                    });
+                });
+
+                state.mqttClient.on('message', (topic, payload) => {
+                    try {
+                        const msg = JSON.parse(payload.toString());
+                        state.lastSn++;
+                        state.messages.push(msg);
+                        saveMessages(state.channelSaid, [msg], state.lastSn);
+                        renderMessages();
+                        document.getElementById('lastUpdated').textContent = new Date().toLocaleTimeString();
+                    } catch (e) {
+                        console.error('MQTT message parse error:', e);
+                    }
+                });
+
+                state.mqttClient.on('error', () => {
+                    setStatus('disconnected', 'MQTT error, polling...');
+                    startPolling();
+                });
+
+                state.mqttClient.on('close', () => {
+                    setStatus('disconnected', 'Disconnected');
+                });
+            } catch (e) {
+                setStatus('polling', 'MQTT unavailable, polling...');
+                startPolling();
+            }
+        }
+
+        function startPolling() {
+            if (state.pollInterval) clearInterval(state.pollInterval);
+            setStatus('polling', 'Polling');
+            state.pollInterval = setInterval(fetchMessages, 30000);
+        }
+
+        // ---- Rendering ----
+
+        // Deterministic avatar color from AID string
+        function aidColor(aid) {
+            if (!aid) return 0;
+            let hash = 0;
+            for (let i = 0; i < aid.length; i++) {
+                hash = ((hash << 5) - hash) + aid.charCodeAt(i);
+                hash |= 0;
+            }
+            return Math.abs(hash) % 6;
+        }
+
+        // Abbreviate an AID for display
+        function shortAid(aid) {
+            if (!aid || aid.length < 16) return aid || '';
+            return aid.slice(0, 8) + '...' + aid.slice(-4);
+        }
+
+        // Format a timestamp nicely
+        function formatTime(ts) {
+            if (!ts) return '';
+            const d = new Date(ts);
+            if (isNaN(d.getTime())) return ts;
+
+            const now = new Date();
+            const diff = now - d;
+            const secs = Math.floor(diff / 1000);
+            const mins = Math.floor(secs / 60);
+            const hours = Math.floor(mins / 60);
+
+            if (secs < 60) return `${secs}s`;
+            if (mins < 60) return `${mins}m`;
+            if (hours < 24) return `${hours}h`;
+
+            // Older than a day — show date
+            const month = d.toLocaleString('default', { month: 'short' });
+            const day = d.getDate();
+            const year = d.getFullYear() !== now.getFullYear() ? `, ${d.getFullYear()}` : '';
+            return `${month} ${day}${year}`;
+        }
+
+        // Format full date for title tooltip
+        function formatFullTime(ts) {
+            if (!ts) return '';
+            const d = new Date(ts);
+            if (isNaN(d.getTime())) return ts;
+            return d.toLocaleString('default', {
+                hour: 'numeric', minute: '2-digit',
+                month: 'short', day: 'numeric', year: 'numeric'
+            });
+        }
+
+        // Linkify URLs in text
+        function linkify(text) {
+            const urlPattern = /(https?:\/\/[^\s<]+)/g;
+            return text.replace(urlPattern, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+        }
+
+        // Parse a message into { sender, content, ts, digest } or fallback
+        function parseMsg(msg) {
+            if (typeof msg === 'object' && msg !== null) {
+                return {
+                    sender: msg.sender || null,
+                    content: msg.content || JSON.stringify(msg, null, 2),
+                    ts: msg.ts || null,
+                    digest: msg.digest || null,
+                };
+            }
+            // Plain string fallback
+            return { sender: null, content: String(msg), ts: null, digest: null };
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function renderPost(msg, sn) {
+            const m = parseMsg(msg);
+            const colorIdx = aidColor(m.sender);
+            const channelName = state.channel?.topic || 'Channel';
+            const initial = channelName.charAt(0).toUpperCase();
+            const name = channelName;
+            const timeStr = m.ts ? formatTime(m.ts) : '';
+            const fullTime = m.ts ? formatFullTime(m.ts) : '';
+            const avatarSaid = state.channel?.avatar;
+
+            // Escape then linkify content
+            const rendered = linkify(escapeHtml(m.content));
+
+            const avatarHtml = avatarSaid
+                ? `<img src="${state.serverUrl}/vault/${avatarSaid}" onerror="this.style.display='none';this.parentElement.textContent='${initial}'" />`
+                : initial;
+
+            return `
+                <div class="post">
+                    <div class="post-avatar avatar-${colorIdx}">${avatarHtml}</div>
+                    <div class="post-body">
+                        <div class="post-header">
+                            <span class="post-name">${escapeHtml(name)}</span>
+                            <span class="post-aid" title="${m.sender ? escapeHtml(m.sender) : ''}">${m.sender ? escapeHtml(shortAid(m.sender)) : ''}</span>
+                            ${timeStr ? `<span class="post-sep">&middot;</span><span class="post-time" title="${escapeHtml(fullTime)}">${escapeHtml(timeStr)}</span>` : ''}
+                            <span class="sn-badge">#${sn}</span>
+                        </div>
+                        <div class="post-content">${rendered}</div>
+                        ${m.digest ? `<div class="post-digest" title="SAID: ${escapeHtml(m.digest)}">${escapeHtml(m.digest)}</div>` : ''}
+                        <div class="post-actions">
+                            <span class="post-action">
+                                <svg viewBox="0 0 24 24"><path d="M1.751 10c0-4.42 3.584-8 8.005-8h4.366c4.49 0 8.129 3.64 8.129 8.13 0 2.25-.893 4.41-2.481 6l-5.51 5.52c-.27.27-.71.27-.98 0l-5.51-5.52C2.644 14.41 1.751 12.25 1.751 10z"/></svg>
+                            </span>
+                            <span class="post-action">
+                                <svg viewBox="0 0 24 24"><path d="M4.5 3.88l4.432 4.14-1.364 1.46L5.5 7.55V16c0 1.1.896 2 2 2H13v2H7.5c-2.209 0-4-1.79-4-4V7.55L1.432 9.48.068 8.02 4.5 3.88zM16.5 6H11V4h5.5c2.209 0 4 1.79 4 4v8.45l2.068-1.93 1.364 1.46-4.432 4.14-4.432-4.14 1.364-1.46 2.068 1.93V8c0-1.1-.896-2-2-2z"/></svg>
+                            </span>
+                            <span class="post-action">
+                                <svg viewBox="0 0 24 24"><path d="M7.5 15.5V4h2v11.5l-1 1-1-1zM11.5 15.5V4h2v11.5l-1 1-1-1zM4 20h16v2H4v-2z"/></svg>
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderMessages() {
+            const list = document.getElementById('messageList');
+            if (state.messages.length === 0) {
+                list.innerHTML = `
+                    <div class="empty-state">
+                        <h3>No posts yet</h3>
+                        <p>When messages are published, they'll show up here.</p>
+                    </div>`;
+                return;
+            }
+
+            // Newest first
+            list.innerHTML = state.messages
+                .map((msg, idx) => renderPost(msg, idx))
+                .reverse()
+                .join('');
+        }
+
+        // ---- Status ----
+        function setStatus(type, text) {
+            document.getElementById('statusDot').className = `connection-dot ${type}`;
+            document.getElementById('statusText').textContent = text;
+        }
+
+        async function refresh() {
+            setStatus('polling', 'Refreshing...');
+            await fetchMessages();
+            if (state.mqttClient && state.mqttClient.connected) {
+                setStatus('connected', 'Live');
+            } else if (state.pollInterval) {
+                setStatus('polling', 'Polling');
+            }
+        }
+
+        function disconnect() {
+            if (state.mqttClient) {
+                state.mqttClient.end();
+                state.mqttClient = null;
+            }
+            if (state.pollInterval) {
+                clearInterval(state.pollInterval);
+                state.pollInterval = null;
+            }
+            state.messages = [];
+            state.lastSn = -1;
+            state.channelSaid = null;
+            state.channel = null;
+
+            document.getElementById('setup').style.display = 'block';
+            document.getElementById('channelView').style.display = 'none';
+            document.getElementById('channelBanner').style.display = 'none';
+            document.getElementById('channelBanner').style.backgroundImage = '';
+        }
+
+        // Init
+        loadFromUrl();
+    </script>
+</body>
+</html>
