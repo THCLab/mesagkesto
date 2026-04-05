@@ -56,6 +56,12 @@ pub enum ExchangeArguments {
         channel_type: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         topic: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        description: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        avatar: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        background: Option<String>,
         #[serde(default)]
         members: Vec<String>,
     },
@@ -100,6 +106,17 @@ pub enum ExchangeArguments {
         ch: String,
         target: String,
         role: String,
+    },
+    // Update channel profile metadata (creator only)
+    #[serde(rename = "/ch/update")]
+    ChannelUpdate {
+        ch: String,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        description: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        avatar: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        background: Option<String>,
     },
     // Subscribe to a public broadcast channel
     #[serde(rename = "/ch/sub")]
@@ -203,6 +220,9 @@ impl ValidateActor {
                     ExchangeArguments::ChannelCreate {
                         channel_type,
                         topic,
+                        description,
+                        avatar,
+                        background,
                         members,
                     } => {
                         let sender_str = sender_aid
@@ -212,7 +232,7 @@ impl ValidateActor {
                         info!(creator = %sender_str, channel_type = %channel_type, "Creating channel");
                         let channel = self
                             .channel
-                            .create(sender_str, ct, topic, members)
+                            .create(sender_str, ct, topic, description, avatar, background, members)
                             .await?;
 
                         // Notify invited members
@@ -327,6 +347,21 @@ impl ValidateActor {
                         info!(channel = %ch, setter = %sender_str, target = %target, role = %role, "Channel set role");
                         self.channel
                             .set_role(ch, sender_str, target, member_role)
+                            .await?;
+                        Ok(None)
+                    }
+                    ExchangeArguments::ChannelUpdate {
+                        ch,
+                        description,
+                        avatar,
+                        background,
+                    } => {
+                        let sender_str = sender_aid
+                            .ok_or(MessageboxError::VerificationFailure)?
+                            .to_string();
+                        info!(channel = %ch, updater = %sender_str, "Channel update");
+                        self.channel
+                            .update(ch, sender_str, description, avatar, background)
                             .await?;
                         Ok(None)
                     }

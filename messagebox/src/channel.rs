@@ -47,6 +47,12 @@ pub struct Channel {
     pub channel_type: ChannelType,
     pub creator: String,
     pub topic: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub avatar: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub background: Option<String>,
     pub members: Vec<ChannelMember>,
     pub created_at: String,
     pub updated_at: String,
@@ -111,6 +117,9 @@ pub enum ChannelMsg {
         creator_aid: String,
         channel_type: ChannelType,
         topic: Option<String>,
+        description: Option<String>,
+        avatar: Option<String>,
+        background: Option<String>,
         initial_members: Vec<String>,
         sender: oneshot::Sender<Result<Channel, MessageboxError>>,
     },
@@ -156,6 +165,14 @@ pub enum ChannelMsg {
         setter_aid: String,
         target_aid: String,
         role: MemberRole,
+        sender: oneshot::Sender<Result<(), MessageboxError>>,
+    },
+    Update {
+        channel_said: String,
+        updater_aid: String,
+        description: Option<String>,
+        avatar: Option<String>,
+        background: Option<String>,
         sender: oneshot::Sender<Result<(), MessageboxError>>,
     },
     Delete {
@@ -208,6 +225,9 @@ impl ChannelActor {
                 creator_aid,
                 channel_type,
                 topic,
+                description,
+                avatar,
+                background,
                 initial_members,
                 sender,
             } => {
@@ -215,6 +235,9 @@ impl ChannelActor {
                     creator_aid,
                     channel_type,
                     topic,
+                    description,
+                    avatar,
+                    background,
                     initial_members,
                 ));
             }
@@ -286,6 +309,22 @@ impl ChannelActor {
                 let _ =
                     sender.send(self.handle_set_role(&channel_said, &setter_aid, &target_aid, role));
             }
+            ChannelMsg::Update {
+                channel_said,
+                updater_aid,
+                description,
+                avatar,
+                background,
+                sender,
+            } => {
+                let _ = sender.send(self.handle_update(
+                    &channel_said,
+                    &updater_aid,
+                    description,
+                    avatar,
+                    background,
+                ));
+            }
             ChannelMsg::Delete {
                 channel_said,
                 deleter_aid,
@@ -326,6 +365,9 @@ impl ChannelActor {
         creator_aid: String,
         channel_type: ChannelType,
         topic: Option<String>,
+        description: Option<String>,
+        avatar: Option<String>,
+        background: Option<String>,
         initial_members: Vec<String>,
     ) -> Result<Channel, MessageboxError> {
         let now = Utc::now().to_rfc3339();
@@ -400,6 +442,9 @@ impl ChannelActor {
             channel_type: channel_type.clone(),
             creator: creator_aid.clone(),
             topic: topic.clone(),
+            description,
+            avatar,
+            background,
             members,
             created_at: now.clone(),
             updated_at: now,
@@ -630,6 +675,36 @@ impl ChannelActor {
         Ok(())
     }
 
+    fn handle_update(
+        &self,
+        channel_said: &str,
+        updater_aid: &str,
+        description: Option<String>,
+        avatar: Option<String>,
+        background: Option<String>,
+    ) -> Result<(), MessageboxError> {
+        let mut channel = self
+            .load_channel(channel_said)
+            .ok_or(MessageboxError::UnknownMessage("Channel not found".into()))?;
+
+        if !channel.is_creator(updater_aid) {
+            return Err(MessageboxError::AclDenied(updater_aid.to_string()));
+        }
+
+        if let Some(d) = description {
+            channel.description = if d.is_empty() { None } else { Some(d) };
+        }
+        if let Some(a) = avatar {
+            channel.avatar = if a.is_empty() { None } else { Some(a) };
+        }
+        if let Some(b) = background {
+            channel.background = if b.is_empty() { None } else { Some(b) };
+        }
+
+        channel.updated_at = Utc::now().to_rfc3339();
+        self.save_channel(&channel)
+    }
+
     fn handle_delete(
         &self,
         channel_said: &str,
@@ -687,6 +762,9 @@ impl ChannelHandle {
         creator_aid: String,
         channel_type: ChannelType,
         topic: Option<String>,
+        description: Option<String>,
+        avatar: Option<String>,
+        background: Option<String>,
         initial_members: Vec<String>,
     ) -> Result<Channel, MessageboxError> {
         let (send, recv) = oneshot::channel();
@@ -696,6 +774,9 @@ impl ChannelHandle {
                 creator_aid,
                 channel_type,
                 topic,
+                description,
+                avatar,
+                background,
                 initial_members,
                 sender: send,
             })
@@ -834,6 +915,29 @@ impl ChannelHandle {
                 setter_aid,
                 target_aid,
                 role,
+                sender: send,
+            })
+            .await;
+        recv.await.map_err(|_| MessageboxError::KilledSender)?
+    }
+
+    pub async fn update(
+        &self,
+        channel_said: String,
+        updater_aid: String,
+        description: Option<String>,
+        avatar: Option<String>,
+        background: Option<String>,
+    ) -> Result<(), MessageboxError> {
+        let (send, recv) = oneshot::channel();
+        let _ = self
+            .sender
+            .send(ChannelMsg::Update {
+                channel_said,
+                updater_aid,
+                description,
+                avatar,
+                background,
                 sender: send,
             })
             .await;

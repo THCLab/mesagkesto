@@ -18,10 +18,13 @@ impl MessageBoxListener {
         let state = Data::new(Arc::new(self.messagebox.clone()));
         let mqtt_url = Data::new(self.mqtt_url.clone());
         Ok(HttpServer::new(move || {
+            // 10 MB payload limit (for vault image uploads)
+            let payload_cfg = actix_web::web::PayloadConfig::new(10 * 1024 * 1024);
             App::new()
                 .wrap(TracingLogger::default())
                 .app_data(state.clone())
                 .app_data(mqtt_url.clone())
+                .app_data(payload_cfg)
                 .route(
                     "/introduce",
                     actix_web::web::get().to(http_handlers::introduce),
