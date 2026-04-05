@@ -123,6 +123,15 @@ pub enum ExchangeArguments {
     ChannelSubscribe {
         ch: String,
     },
+    // Task sync: forward opaque task event payload to recipient's mailbox.
+    // All task logic lives in the client — mesagkesto just routes.
+    #[serde(rename = "/task/sync")]
+    TaskSync {
+        /// Recipient AID
+        i: String,
+        /// Opaque task sync payload (JSON-serialized TaskSyncEnvelope)
+        a: String,
+    },
 }
 
 pub enum ValidateMessage {
@@ -369,6 +378,32 @@ impl ValidateActor {
                         // For public broadcasts, subscription is handled by EMQX natively.
                         // This is a no-op on the server side.
                         debug!(channel = %ch, "Channel subscribe (no-op, handled by MQTT broker)");
+                        Ok(None)
+                    }
+                    ExchangeArguments::TaskSync { i, a } => {
+                        // Task sync: same ACL enforcement as Fwd, then store in
+                        // recipient's mailbox. All task logic is client-side.
+                        let acl_tokens = self.acl.get_tokens(&i).await;
+                        if !acl_tokens.is_empty() {
+                            let authorized = match sender_aid {
+                                Some(aid) => acl_tokens.iter().any(|t| t == aid),
+                                None => false,
+                            };
+                            if !authorized {
+                                let sender_str = sender_aid.unwrap_or("unknown").to_string();
+                                warn!(
+                                    sender = %sender_str,
+                                    recipient = %i,
+                                    "ACL denied task sync: sender not in recipient's whitelist"
+                                );
+                                return Err(MessageboxError::AclDenied(sender_str));
+                            }
+                        }
+
+                        info!(recipient = %i, sender = ?sender_aid, payload_len = a.len(), "Task sync");
+                        let digest_algo: HashFunction = (HashFunctionCode::Blake3_256).into();
+                        let sai = digest_algo.derive(a.as_bytes()).to_string();
+                        self.storage.save(i.clone(), a, sai).await.to_string();
                         Ok(None)
                     }
                 },
