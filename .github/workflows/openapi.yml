@@ -1,0 +1,42 @@
+name: OpenAPI Spec
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Generate OpenAPI spec
+        run: cargo test -p messagebox --test test_openapi_export
+
+      - name: Check for changes
+        id: diff
+        run: |
+          git diff --exit-code openapi.yaml || echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Auto-commit updated spec
+        if: steps.diff.outputs.changed == 'true' && github.event_name == 'push'
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: auto-update openapi.yaml"
+          file_pattern: openapi.yaml
+
+      - name: Fail PR if spec is outdated
+        if: steps.diff.outputs.changed == 'true' && github.event_name == 'pull_request'
+        run: |
+          echo "::error::openapi.yaml is out of date. Run 'cargo test -p messagebox --test test_openapi_export' and commit the result."
+          exit 1

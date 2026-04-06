@@ -25,7 +25,7 @@ impl RegistrationMode {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct InviteToken {
     pub token: String,
     pub created_at: String,

@@ -1,0 +1,1216 @@
+openapi: 3.1.0
+info:
+  title: Mesaĝkesto API
+  description: |-
+    Secure real-time messaging service built on KERI identifiers.
+
+    ## Authentication
+
+    Endpoints under `/mailbox/*` and `DELETE /auth/session` require a session token
+    obtained via the DauthZ challenge-response flow. Pass it as:
+
+    ```
+    Authorization: Bearer <session_token>
+    ```
+
+    ## Authentication Flow
+
+    1. `GET /auth/challenge?purpose=registration` — get a challenge
+    2. Sign the challenge with your KERI keys (CESR envelope)
+    3. `POST /auth/respond` — submit signed challenge
+    4. On **registration**: server provisions a mailbox, returns account info
+    5. On **identification**: server issues a session token (1hr expiry)
+
+    ## CESR Messages
+
+    `POST /` accepts CESR-encoded JSON with attached cryptographic signatures.
+    The sender's OOBI must be resolved first via `POST /resolve`.
+  license:
+    name: EUPL 1.2
+    url: https://joinup.ec.europa.eu/collection/eupl/eupl-text-eupl-12
+  version: 1.0.0
+servers:
+- url: http://localhost:8081
+  description: Local development
+paths:
+  /:
+    post:
+      tags:
+      - KERI
+      summary: Process a CESR-signed message.
+      description: |-
+        Accepts a CESR-encoded message (JSON payload + cryptographic signature attachments).
+        The sender's OOBI must have been resolved beforehand.
+
+        The body is a raw CESR stream (not JSON). The payload inside is a tagged JSON object:
+        - `"t": "exn"` for exchange messages (forward, set firebase token)
+        - `"t": "qry"` for query messages (by sequence number, by digest)
+      operationId: process_message
+      requestBody:
+        description: CESR-encoded message stream (JSON payload + signature attachments)
+        content:
+          text/plain:
+            schema:
+              type: string
+        required: true
+      responses:
+        '200':
+          description: Message processed successfully
+          content:
+            text/plain:
+              schema:
+                type: string
+        '202':
+          description: Response not ready — query later via GET /messages/{said}
+          content:
+            text/plain:
+              schema:
+                type: string
+        '400':
+          description: Message ignored due to error
+          content:
+            text/plain:
+              schema:
+                type: string
+        '401':
+          description: Signature verification failed
+        '403':
+          description: ACL denied
+        '422':
+          description: Missing OOBI — resolve sender's OOBI first via POST /resolve
+  /admin/invites:
+    get:
+      tags:
+      - Admin
+      summary: List all active invite tokens (admin only).
+      operationId: admin_list_invites
+      responses:
+        '200':
+          description: Active invites
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/InviteToken'
+        '401':
+          description: Missing or invalid session token
+        '403':
+          description: Only admin AID can access this endpoint
+      security:
+      - bearerAuth: []
+    post:
+      tags:
+      - Admin
+      summary: Create invitation token (admin only).
+      operationId: admin_create_invite
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: 'null'
+              - $ref: '#/components/schemas/CreateInviteBody'
+      responses:
+        '201':
+          description: Invite created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InviteToken'
+        '401':
+          description: Missing or invalid session token
+        '403':
+          description: Only admin AID can access this endpoint
+      security:
+      - bearerAuth: []
+  /admin/invites/{token}:
+    delete:
+      tags:
+      - Admin
+      summary: Revoke invitation token (admin only).
+      operationId: admin_revoke_invite
+      parameters:
+      - name: token
+        in: path
+        description: Invite token to revoke
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Invite revoked
+        '401':
+          description: Missing or invalid session token
+        '403':
+          description: Only admin AID can access this endpoint
+        '404':
+          description: Token not found
+      security:
+      - bearerAuth: []
+  /admin/whitelist:
+    get:
+      tags:
+      - Admin
+      summary: List whitelisted AIDs (admin only).
+      operationId: admin_list_whitelist
+      responses:
+        '200':
+          description: Whitelisted AIDs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+        '401':
+          description: Missing or invalid session token
+        '403':
+          description: Only admin AID can access this endpoint
+      security:
+      - bearerAuth: []
+    post:
+      tags:
+      - Admin
+      summary: Add AID to registration whitelist (admin only).
+      operationId: admin_add_whitelist
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddWhitelistBody'
+        required: true
+      responses:
+        '201':
+          description: AID added to whitelist
+        '401':
+          description: Missing or invalid session token
+        '403':
+          description: Only admin AID can access this endpoint
+      security:
+      - bearerAuth: []
+  /admin/whitelist/{aid}:
+    delete:
+      tags:
+      - Admin
+      summary: Remove AID from whitelist (admin only).
+      operationId: admin_remove_whitelist
+      parameters:
+      - name: aid
+        in: path
+        description: AID to remove from whitelist
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: AID removed from whitelist
+        '401':
+          description: Missing or invalid session token
+        '403':
+          description: Only admin AID can access this endpoint
+        '404':
+          description: AID not found in whitelist
+      security:
+      - bearerAuth: []
+  /auth/challenge:
+    get:
+      tags:
+      - Authentication
+      summary: Request signed DauthZ challenge bound to an OOBI.
+      description: |-
+        The server will parse the OOBI to extract the entity's AID, resolve it
+        to cache the KEL, create a challenge bound to that AID, sign it with
+        the service's KERI key, and return the signed challenge as a CESR stream.
+
+        Use `purpose=registration` for first-time signup (provisions a mailbox)
+        or `purpose=identification` for login (issues a session token).
+
+        **Requires `dauthz_state_dir` to be configured on the server.**
+      operationId: auth_challenge
+      parameters:
+      - name: purpose
+        in: query
+        description: '`registration` for first-time signup, `identification` for login.'
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: oobi
+        in: query
+        description: Your OOBI as a JSON string. The AID is extracted automatically.
+        required: true
+        schema:
+          type: string
+      - name: invite_token
+        in: query
+        description: Optional invite token for invite-only servers.
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      responses:
+        '200':
+          description: 'CESR stream: JSON challenge payload + nontransferable receipt couples'
+          content:
+            text/plain:
+              schema:
+                type: string
+        '404':
+          description: Authentication not configured on this server
+  /auth/respond:
+    post:
+      tags:
+      - Authentication
+      summary: Submit signed challenge response.
+      description: |-
+        Submit a CESR-signed response to complete DauthZ authentication.
+        The body is a raw CESR stream — a JSON payload signed with your KERI keys.
+        The JSON payload inside only needs the nonce from the challenge.
+        On **registration**: provisions a mailbox, returns account info.
+        On **identification**: issues a session token (1hr expiry).
+      operationId: auth_respond
+      requestBody:
+        description: CESR-encoded payload with attached signatures containing the challenge nonce
+        content:
+          text/plain:
+            schema:
+              type: string
+        required: true
+      responses:
+        '200':
+          description: Identification successful — session token issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthenticatedResponse'
+        '201':
+          description: Registration successful — mailbox provisioned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationResponse'
+        '401':
+          description: Invalid challenge response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthErrorResponse'
+        '404':
+          description: Authentication not configured on this server
+  /auth/session:
+    delete:
+      tags:
+      - Authentication
+      summary: Revoke session.
+      description: Revoke the current session token, logging out the client.
+      operationId: auth_revoke
+      responses:
+        '200':
+          description: Session revoked
+        '401':
+          description: Missing or invalid Authorization header
+        '404':
+          description: Authentication not configured on this server
+      security:
+      - bearerAuth: []
+  /broadcast/{aid}/{topic}:
+    get:
+      tags:
+      - Channels
+      summary: Discover a broadcast channel by owner AID and topic name (no auth).
+      operationId: discover_broadcast
+      parameters:
+      - name: aid
+        in: path
+        description: Owner AID
+        required: true
+        schema:
+          type: string
+      - name: topic
+        in: path
+        description: Topic name
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Broadcast channel metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Channel'
+        '404':
+          description: Broadcast not found
+  /broadcast/{aid}/{topic}/messages:
+    get:
+      tags:
+      - Channels
+      summary: Get public broadcast messages (no auth required).
+      operationId: get_broadcast_messages
+      parameters:
+      - name: aid
+        in: path
+        description: Owner AID
+        required: true
+        schema:
+          type: string
+      - name: topic
+        in: path
+        description: Topic name
+        required: true
+        schema:
+          type: string
+      - name: s
+        in: query
+        description: Start sequence number (0 = from beginning).
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          minimum: 0
+      responses:
+        '200':
+          description: Broadcast messages
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChannelMessagesResponse'
+        '404':
+          description: Broadcast not found
+  /broadcasts:
+    get:
+      tags:
+      - Channels
+      summary: List all public broadcast channels on this instance (no auth).
+      operationId: list_broadcasts
+      responses:
+        '200':
+          description: Public broadcast channels
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Channel'
+  /channels:
+    get:
+      tags:
+      - Channels
+      summary: List all channels the authenticated user is a member of.
+      operationId: list_channels
+      responses:
+        '200':
+          description: List of channels
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Channel'
+        '401':
+          description: Missing or invalid session token
+      security:
+      - bearerAuth: []
+  /channels/pending:
+    get:
+      tags:
+      - Channels
+      summary: List pending channel invites for the authenticated user.
+      operationId: pending_invites
+      responses:
+        '200':
+          description: Pending invites
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PendingInviteItem'
+        '401':
+          description: Missing or invalid session token
+      security:
+      - bearerAuth: []
+  /channels/{said}:
+    get:
+      tags:
+      - Channels
+      summary: Get channel metadata by SAID (authenticated, must be member).
+      operationId: get_channel
+      parameters:
+      - name: said
+        in: path
+        description: Channel SAID
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Channel metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Channel'
+        '401':
+          description: Missing or invalid session token / not a member
+        '404':
+          description: Channel not found
+      security:
+      - bearerAuth: []
+  /channels/{said}/messages:
+    get:
+      tags:
+      - Channels
+      summary: Get channel messages by sequence number (authenticated, must be member).
+      operationId: get_channel_messages
+      parameters:
+      - name: said
+        in: path
+        description: Channel SAID
+        required: true
+        schema:
+          type: string
+      - name: s
+        in: query
+        description: Start sequence number (0 = from beginning).
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          minimum: 0
+      responses:
+        '200':
+          description: Channel messages
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChannelMessagesResponse'
+        '401':
+          description: Missing or invalid session token / not a member
+      security:
+      - bearerAuth: []
+  /introduce:
+    get:
+      tags:
+      - KERI
+      summary: Get this messagebox's own OOBI.
+      description: Returns the messagebox's LocationScheme OOBI for discovery.
+      operationId: introduce
+      responses:
+        '200':
+          description: Messagebox location scheme
+          content:
+            application/json:
+              schema: {}
+  /mail/deliver:
+    post:
+      tags:
+      - Mail
+      summary: Deliver mail envelope (server-to-server federation).
+      description: |-
+        Receive a CESR-signed mail envelope from a remote mesagkesto.
+        No Bearer auth — sender authenticates via CESR signature in the envelope.
+      operationId: mail_deliver
+      requestBody:
+        content:
+          application/json:
+            schema: {}
+        required: true
+      responses:
+        '200':
+          description: Mail delivered, receipt returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MailDeliveryReceipt'
+        '404':
+          description: No recipients found on this instance
+  /mail/messages:
+    get:
+      tags:
+      - Mail
+      summary: Get pending mail messages (authenticated).
+      operationId: mail_get_messages
+      parameters:
+      - name: from_seq
+        in: query
+        description: Sequence number to start from (0 = all).
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+          minimum: 0
+      responses:
+        '200':
+          description: Mail messages
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {}
+        '401':
+          description: Missing or invalid session token
+      security:
+      - bearerAuth: []
+  /mail/messages/{seq}:
+    delete:
+      tags:
+      - Mail
+      summary: Acknowledge receipt of a mail message.
+      operationId: mail_delete_message
+      parameters:
+      - name: seq
+        in: path
+        description: Mail message sequence number
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 0
+      responses:
+        '200':
+          description: Mail message deleted
+        '401':
+          description: Missing or invalid session token
+      security:
+      - bearerAuth: []
+  /mail/receipt:
+    post:
+      tags:
+      - Mail
+      summary: Receive read receipt from remote mesagkesto (server-to-server).
+      operationId: mail_receipt
+      requestBody:
+        content:
+          application/json:
+            schema: {}
+        required: true
+      responses:
+        '200':
+          description: Receipt stored
+  /mailbox:
+    get:
+      tags:
+      - Mailbox
+      summary: Get mailbox metadata.
+      description: Returns the mailbox metadata for the authenticated AID.
+      operationId: get_mailbox
+      responses:
+        '200':
+          description: Mailbox metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MailboxMetadata'
+        '401':
+          description: Missing or invalid session token
+        '404':
+          description: Mailbox not found (or auth not configured)
+      security:
+      - bearerAuth: []
+    delete:
+      tags:
+      - Mailbox
+      summary: Delete mailbox.
+      description: |-
+        Permanently delete the mailbox for the authenticated AID.
+        This removes all messages, ACL tokens, and associated data.
+      operationId: delete_mailbox
+      responses:
+        '200':
+          description: Mailbox deleted
+        '401':
+          description: Missing or invalid session token
+      security:
+      - bearerAuth: []
+  /mailbox/acl:
+    get:
+      tags:
+      - Mailbox
+      summary: Get ACL whitelist tokens.
+      description: Returns all ACL tokens currently set for the authenticated AID's mailbox.
+      operationId: get_acl
+      responses:
+        '200':
+          description: Current ACL tokens
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AclTokensResponse'
+        '401':
+          description: Missing or invalid session token
+      security:
+      - bearerAuth: []
+    put:
+      tags:
+      - Mailbox
+      summary: Set ACL whitelist tokens.
+      description: |-
+        Replace the entire ACL token set for the authenticated AID's mailbox.
+        Tokens are opaque hex-encoded HMAC-SHA256 values computed client-side.
+      operationId: set_acl
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AclPayload'
+        required: true
+      responses:
+        '200':
+          description: ACL tokens updated
+        '401':
+          description: Missing or invalid session token
+      security:
+      - bearerAuth: []
+  /messages/{said}:
+    get:
+      tags:
+      - KERI
+      summary: Retrieve async response by SAID.
+      description: |-
+        When `POST /` returns 202, the response is not yet ready. Poll this
+        endpoint with the SAID from the 202 response to retrieve it later.
+      operationId: get_response
+      parameters:
+      - name: said
+        in: path
+        description: Self-Addressing Identifier of the pending response
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Response is available
+        '500':
+          description: Unknown response SAID
+  /mqtt/authz:
+    post:
+      tags:
+      - MQTT
+      summary: EMQX HTTP authorization hook for MQTT ACL enforcement.
+      operationId: mqtt_authz
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MqttAuthzRequest'
+        required: true
+      responses:
+        '200':
+          description: Authorization result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MqttAuthzResult'
+  /oobi/{cid}/{role}/{eid}:
+    get:
+      tags:
+      - KERI
+      summary: Get end-role OOBI with location scheme.
+      description: |-
+        Returns a CESR stream containing the end-role authorization reply
+        and location scheme(s) for the given controller/role/endpoint triple.
+      operationId: get_cid_oobi
+      parameters:
+      - name: cid
+        in: path
+        description: Controlling identifier prefix
+        required: true
+        schema:
+          type: string
+      - name: role
+        in: path
+        description: KERI role (witness, watcher, messagebox, controller)
+        required: true
+        schema:
+          type: string
+      - name: eid
+        in: path
+        description: Endpoint identifier prefix
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: CESR stream of end-role + location scheme replies
+          content:
+            text/plain:
+              schema:
+                type: string
+        '500':
+          description: Missing end-role OOBI
+  /oobi/{id}:
+    get:
+      tags:
+      - KERI
+      summary: Get location scheme for an endpoint identifier.
+      description: |-
+        Returns a CESR stream of signed reply messages containing the
+        location scheme(s) for the given endpoint identifier.
+      operationId: get_eid_oobi
+      parameters:
+      - name: id
+        in: path
+        description: Endpoint identifier prefix
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: CESR stream of signed location scheme replies
+          content:
+            text/plain:
+              schema:
+                type: string
+  /register:
+    post:
+      tags:
+      - KERI
+      summary: Register OOBI reply events.
+      description: |-
+        Submit a stream of CESR-encoded signed reply messages (location scheme OOBIs)
+        to register endpoint identifiers.
+      operationId: register
+      requestBody:
+        description: CESR stream of signed reply messages
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+        required: true
+      responses:
+        '200':
+          description: OOBIs registered successfully
+  /resolve:
+    post:
+      tags:
+      - KERI
+      summary: Resolve an OOBI.
+      description: |-
+        Submit an OOBI URL string. The server will resolve it to fetch the
+        identifier's Key Event Log (KEL), which is required before verifying
+        messages from that identifier.
+      operationId: resolve_oobi
+      requestBody:
+        description: OOBI URL to resolve
+        content:
+          text/plain:
+            schema:
+              type: string
+        required: true
+      responses:
+        '200':
+          description: OOBI resolved successfully
+  /vault/{said}:
+    get:
+      tags:
+      - Vault
+      summary: Download a blob by SAID.
+      description: Publicly accessible — knowing the SAID is authorization (content-addressed).
+      operationId: vault_get
+      parameters:
+      - name: said
+        in: path
+        description: SHA-256 hash of the content (hex-encoded)
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Blob content
+          content:
+            application/octet-stream:
+              schema:
+                type: array
+                items:
+                  type: integer
+                  format: int32
+                  minimum: 0
+        '404':
+          description: Blob not found
+    put:
+      tags:
+      - Vault
+      summary: Upload a content-addressed blob (authenticated).
+      description: The SAID must match the SHA-256 hash of the content.
+      operationId: vault_put
+      parameters:
+      - name: said
+        in: path
+        description: SHA-256 hash of the content (hex-encoded)
+        required: true
+        schema:
+          type: string
+      requestBody:
+        description: Binary blob content
+        content:
+          application/octet-stream:
+            schema:
+              type: array
+              items:
+                type: integer
+                format: int32
+                minimum: 0
+        required: true
+      responses:
+        '201':
+          description: Blob stored
+        '400':
+          description: SAID does not match content hash
+        '401':
+          description: Missing or invalid session token
+      security:
+      - bearerAuth: []
+  /ws:
+    get:
+      tags:
+      - WebSocket
+      summary: Upgrade to WebSocket connection.
+      description: |-
+        Upgrade the HTTP connection to a WebSocket for real-time messaging.
+        Server sends ping every 30 seconds; client must respond with pong.
+        Connection is closed after 60 seconds without a pong.
+      operationId: ws_upgrade
+      parameters:
+      - name: token
+        in: query
+        description: Session token obtained from POST /auth/respond
+        required: true
+        schema:
+          type: string
+      responses:
+        '101':
+          description: WebSocket upgrade successful
+        '401':
+          description: Missing or invalid session token
+components:
+  schemas:
+    AclPayload:
+      type: object
+      required:
+      - tokens
+      properties:
+        tokens:
+          type: array
+          items:
+            type: string
+          description: Complete set of whitelist tokens (replaces existing set).
+    AclTokensResponse:
+      type: object
+      required:
+      - tokens
+      properties:
+        tokens:
+          type: array
+          items:
+            type: string
+    AddWhitelistBody:
+      type: object
+      required:
+      - aid
+      properties:
+        aid:
+          type: string
+          description: AID to add to the registration whitelist.
+    AuthErrorResponse:
+      type: object
+      required:
+      - error
+      - reason
+      properties:
+        error:
+          type: string
+        reason:
+          type: string
+    AuthResponsePayload:
+      type: object
+      description: |-
+        Payload inside the CESR-signed envelope for auth response.
+        Only the nonce is needed — the server already knows the bound AID.
+      required:
+      - nonce
+      properties:
+        nonce:
+          type: string
+    AuthenticatedResponse:
+      type: object
+      required:
+      - token
+      - account_id
+      - aid
+      - expires_at
+      properties:
+        account_id:
+          type: string
+        aid:
+          type: string
+        expires_at:
+          type: string
+        mqtt_token:
+          type:
+          - string
+          - 'null'
+        mqtt_url:
+          type:
+          - string
+          - 'null'
+        token:
+          type: string
+    Channel:
+      type: object
+      required:
+      - said
+      - channel_type
+      - creator
+      - members
+      - created_at
+      - updated_at
+      properties:
+        avatar:
+          type:
+          - string
+          - 'null'
+        background:
+          type:
+          - string
+          - 'null'
+        channel_type:
+          $ref: '#/components/schemas/ChannelType'
+        created_at:
+          type: string
+        creator:
+          type: string
+        description:
+          type:
+          - string
+          - 'null'
+        members:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChannelMember'
+        said:
+          type: string
+        topic:
+          type:
+          - string
+          - 'null'
+        updated_at:
+          type: string
+    ChannelMember:
+      type: object
+      required:
+      - aid
+      - role
+      - status
+      - invited_at
+      properties:
+        aid:
+          type: string
+        invited_at:
+          type: string
+        joined_at:
+          type:
+          - string
+          - 'null'
+        role:
+          $ref: '#/components/schemas/MemberRole'
+        status:
+          $ref: '#/components/schemas/MemberStatus'
+    ChannelMessagesResponse:
+      type: object
+      required:
+      - messages
+      properties:
+        last_sn:
+          type:
+          - integer
+          - 'null'
+          format: int64
+          minimum: 0
+        messages:
+          type: array
+          items: {}
+    ChannelType:
+      type: string
+      enum:
+      - direct
+      - broadcast
+      - broadcast_private
+      - group
+    CreateInviteBody:
+      type: object
+      properties:
+        label:
+          type:
+          - string
+          - 'null'
+          description: Optional human-readable label for the invite.
+    InviteToken:
+      type: object
+      required:
+      - token
+      - created_at
+      properties:
+        created_at:
+          type: string
+        label:
+          type:
+          - string
+          - 'null'
+        token:
+          type: string
+    MailDeliveryReceipt:
+      type: object
+      required:
+      - message_id
+      - receipt_type
+      - signer_aid
+      - timestamp
+      - cesr_signature
+      properties:
+        cesr_signature:
+          type: string
+        message_id:
+          type: string
+        receipt_type:
+          type: string
+        signer_aid:
+          type: string
+        timestamp:
+          type: string
+    MailboxMetadata:
+      type: object
+      required:
+      - aid
+      - state
+      - created_at
+      - updated_at
+      properties:
+        aid:
+          type: string
+        created_at:
+          type: string
+        state:
+          $ref: '#/components/schemas/MailboxState'
+        updated_at:
+          type: string
+    MailboxState:
+      type: string
+      enum:
+      - provisioned
+      - active
+      - suspended
+      - deleted
+    MemberRole:
+      type: string
+      enum:
+      - creator
+      - admin
+      - member
+    MemberStatus:
+      type: string
+      enum:
+      - active
+      - invited
+      - left
+      - removed
+    MqttAuthzRequest:
+      type: object
+      description: |-
+        EMQX HTTP authorization hook.
+        Called by EMQX on each PUBLISH to check sender-level ACL.
+        Only enforces ACL for publishes to `msg/inbox/{recipient_aid}`.
+      required:
+      - clientid
+      - topic
+      - action
+      properties:
+        action:
+          type: string
+        clientid:
+          type: string
+        topic:
+          type: string
+    MqttAuthzResult:
+      type: object
+      required:
+      - result
+      properties:
+        result:
+          type: string
+    PendingInviteItem:
+      type: object
+      required:
+      - channel_said
+      - channel_type
+      - inviter_aid
+      properties:
+        channel_said:
+          type: string
+        channel_type:
+          type: string
+        inviter_aid:
+          type: string
+        topic:
+          type:
+          - string
+          - 'null'
+    RegistrationResponse:
+      type: object
+      required:
+      - status
+      - aid
+      - account_id
+      properties:
+        account_id:
+          type: string
+        aid:
+          type: string
+        status:
+          type: string
+    Session:
+      type: object
+      required:
+      - token
+      - account_id
+      - aid
+      - expires_at
+      properties:
+        account_id:
+          type: string
+        aid:
+          type: string
+        expires_at:
+          type: string
+        token:
+          type: string
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Session token from `POST /auth/respond` (identification flow)
+tags:
+- name: KERI
+  description: KERI message processing, OOBI resolution, and endpoint discovery
+- name: Authentication
+  description: DauthZ challenge-response authentication and session management
+- name: Mailbox
+  description: Mailbox provisioning, metadata, and ACL management
+- name: WebSocket
+  description: Real-time messaging via WebSocket
+- name: Channels
+  description: Channel and broadcast messaging
+- name: Mail
+  description: Formal mail federation endpoints (server-to-server and client)
+- name: Vault
+  description: Content-addressed blob storage
+- name: Admin
+  description: Administrative endpoints — invite and whitelist management (admin AID only)
+- name: MQTT
+  description: MQTT authorization hooks (EMQX integration)

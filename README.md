@@ -96,6 +96,16 @@ docker run -p 8080:8081 mesagkesto
 
 ## API
 
+The full API specification is available in [`openapi.yaml`](openapi.yaml) (OpenAPI 3.1). It is auto-generated from source code annotations using [utoipa](https://github.com/juhaku/utoipa) and kept in sync via CI.
+
+To regenerate after modifying endpoints:
+
+```bash
+cargo test -p messagebox --test test_openapi_export
+```
+
+This writes `openapi.yaml` at the repository root. The CI workflow (`.github/workflows/openapi.yml`) auto-commits changes on pushes to `main` and fails PRs if the spec is outdated.
+
 ### KERI Endpoints
 
 | Method | Path | Description |
@@ -222,6 +232,22 @@ All channel mutations are submitted as CESR-signed exchange messages through `PO
 - **Member** — read + write (group/direct) or read-only (broadcasts)
 
 Channel IDs are SAIDs (Self-Addressing Identifiers) — Blake3-256 hashes of the channel creation event, making them globally unique and content-addressable.
+
+### Formal Mail Federation Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST /mail/deliver` | Receive a CESR-signed mail envelope from a remote mesagkesto (server-to-server) |
+| `POST /mail/receipt` | Receive a read receipt from a remote mesagkesto (server-to-server) |
+| `GET /mail/messages?from_seq=N` | Client polls for pending mail (authenticated) |
+| `DELETE /mail/messages/{seq}` | Acknowledge receipt of a mail message (authenticated) |
+
+### Storage Vault Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `PUT /vault/{said}` | Upload a content-addressed blob — SAID must match SHA-256 hash (authenticated) |
+| `GET /vault/{said}` | Download a blob by SAID (publicly accessible, content-addressed) |
 
 ### MQTT Authorization Endpoint
 

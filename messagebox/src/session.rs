@@ -6,7 +6,7 @@ use crate::db::Db;
 
 const SESSIONS: TableDefinition<&str, &str> = TableDefinition::new("sessions");
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Session {
     pub token: String,
     pub account_id: String,

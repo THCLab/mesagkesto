@@ -6,7 +6,7 @@ use tracing::{debug, info, warn};
 use crate::db::Db;
 use crate::MessageboxError;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum MailboxState {
     Provisioned,
@@ -15,7 +15,7 @@ pub enum MailboxState {
     Deleted,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct MailboxMetadata {
     pub aid: String,
     pub state: MailboxState,

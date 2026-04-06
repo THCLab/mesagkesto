@@ -15,6 +15,7 @@ pub mod messagebox;
 pub mod messagebox_listener;
 pub mod notifier;
 pub mod oobis;
+pub mod openapi;
 pub mod registration;
 mod responses_store;
 pub mod session;

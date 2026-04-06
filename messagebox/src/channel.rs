@@ -6,7 +6,7 @@ use tracing::{debug, info};
 
 use crate::{db::Db, MessageboxError};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ChannelType {
     Direct,
@@ -15,7 +15,7 @@ pub enum ChannelType {
     Group,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MemberRole {
     Creator,
@@ -23,7 +23,7 @@ pub enum MemberRole {
     Member,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MemberStatus {
     Active,
@@ -32,7 +32,7 @@ pub enum MemberStatus {
     Removed,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ChannelMember {
     pub aid: String,
     pub role: MemberRole,
@@ -41,7 +41,7 @@ pub struct ChannelMember {
     pub invited_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Channel {
     pub said: String,
     pub channel_type: ChannelType,

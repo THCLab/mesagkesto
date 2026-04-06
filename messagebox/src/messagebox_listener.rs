@@ -173,7 +173,7 @@ impl MessageBoxListener {
     }
 }
 
-mod http_handlers {
+pub(crate) mod http_handlers {
     use std::sync::Arc;
 
     use crate::{messagebox::MessageBox, MessageboxError};
@@ -191,6 +191,66 @@ mod http_handlers {
     use crate::ws_session::WsSession;
 
     use super::ApiError;
+
+    // --- Response schemas for OpenAPI documentation ---
+
+    #[derive(serde::Serialize, utoipa::ToSchema)]
+    pub(crate) struct RegistrationResponse {
+        pub status: String,
+        pub aid: String,
+        pub account_id: String,
+    }
+
+    #[derive(serde::Serialize, utoipa::ToSchema)]
+    pub(crate) struct AuthenticatedResponse {
+        pub token: String,
+        pub account_id: String,
+        pub aid: String,
+        pub expires_at: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub mqtt_token: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub mqtt_url: Option<String>,
+    }
+
+    #[derive(serde::Serialize, utoipa::ToSchema)]
+    pub(crate) struct AuthErrorResponse {
+        pub error: String,
+        pub reason: String,
+    }
+
+    #[derive(serde::Serialize, utoipa::ToSchema)]
+    pub(crate) struct AclTokensResponse {
+        pub tokens: Vec<String>,
+    }
+
+    #[derive(serde::Serialize, utoipa::ToSchema)]
+    pub(crate) struct MqttAuthzResult {
+        pub result: String,
+    }
+
+    #[derive(serde::Serialize, utoipa::ToSchema)]
+    pub(crate) struct ChannelMessagesResponse {
+        pub last_sn: Option<u64>,
+        pub messages: Vec<serde_json::Value>,
+    }
+
+    #[derive(serde::Serialize, utoipa::ToSchema)]
+    pub(crate) struct PendingInviteItem {
+        pub channel_said: String,
+        pub channel_type: String,
+        pub topic: Option<String>,
+        pub inviter_aid: String,
+    }
+
+    #[derive(serde::Serialize, utoipa::ToSchema)]
+    pub(crate) struct MailDeliveryReceipt {
+        pub message_id: String,
+        pub receipt_type: String,
+        pub signer_aid: String,
+        pub timestamp: String,
+        pub cesr_signature: String,
+    }
 
     /// JWT claims for MQTT authentication with EMQX.
     #[derive(serde::Serialize, serde::Deserialize)]
@@ -237,6 +297,17 @@ mod http_handlers {
         })
     }
 
+    /// Get this messagebox's own OOBI.
+    ///
+    /// Returns the messagebox's LocationScheme OOBI for discovery.
+    #[utoipa::path(
+        get,
+        path = "/introduce",
+        tag = "KERI",
+        responses(
+            (status = 200, description = "Messagebox location scheme", body = serde_json::Value)
+        )
+    )]
     pub async fn introduce(data: web::Data<Arc<MessageBox>>) -> Result<HttpResponse, ApiError> {
         debug!("GET /introduce");
         let oobi = data.oobi();
@@ -244,8 +315,22 @@ mod http_handlers {
         Ok(HttpResponse::Ok().json(oobi))
     }
 
-    /// Returns stream of signed reply messages that has endpoint identifier
-    /// location schemas inside.
+    /// Get location scheme for an endpoint identifier.
+    ///
+    /// Returns a CESR stream of signed reply messages containing the
+    /// location scheme(s) for the given endpoint identifier.
+    #[utoipa::path(
+        get,
+        path = "/oobi/{id}",
+        tag = "KERI",
+        params(
+            ("id" = String, Path, description = "Endpoint identifier prefix")
+        ),
+        responses(
+            (status = 200, description = "CESR stream of signed location scheme replies",
+             content_type = "text/plain", body = String)
+        )
+    )]
     pub async fn get_eid_oobi(
         eid: web::Path<IdentifierPrefix>,
         data: web::Data<Arc<MessageBox>>,
@@ -259,6 +344,25 @@ mod http_handlers {
             .body(oobis))
     }
 
+    /// Get end-role OOBI with location scheme.
+    ///
+    /// Returns a CESR stream containing the end-role authorization reply
+    /// and location scheme(s) for the given controller/role/endpoint triple.
+    #[utoipa::path(
+        get,
+        path = "/oobi/{cid}/{role}/{eid}",
+        tag = "KERI",
+        params(
+            ("cid" = String, Path, description = "Controlling identifier prefix"),
+            ("role" = String, Path, description = "KERI role (witness, watcher, messagebox, controller)"),
+            ("eid" = String, Path, description = "Endpoint identifier prefix")
+        ),
+        responses(
+            (status = 200, description = "CESR stream of end-role + location scheme replies",
+             content_type = "text/plain", body = String),
+            (status = 500, description = "Missing end-role OOBI")
+        )
+    )]
     pub async fn get_cid_oobi(
         path: web::Path<(IdentifierPrefix, Role, IdentifierPrefix)>,
         data: web::Data<Arc<MessageBox>>,
@@ -284,6 +388,32 @@ mod http_handlers {
             .body(oobis))
     }
 
+    /// Process a CESR-signed message.
+    ///
+    /// Accepts a CESR-encoded message (JSON payload + cryptographic signature attachments).
+    /// The sender's OOBI must have been resolved beforehand.
+    ///
+    /// The body is a raw CESR stream (not JSON). The payload inside is a tagged JSON object:
+    /// - `"t": "exn"` for exchange messages (forward, set firebase token)
+    /// - `"t": "qry"` for query messages (by sequence number, by digest)
+    #[utoipa::path(
+        post,
+        path = "/",
+        tag = "KERI",
+        request_body(content = String, content_type = "text/plain",
+                     description = "CESR-encoded message stream (JSON payload + signature attachments)"),
+        responses(
+            (status = 200, description = "Message processed successfully",
+             content_type = "text/plain", body = String),
+            (status = 202, description = "Response not ready — query later via GET /messages/{said}",
+             content_type = "text/plain", body = String),
+            (status = 400, description = "Message ignored due to error",
+             content_type = "text/plain", body = String),
+            (status = 401, description = "Signature verification failed"),
+            (status = 403, description = "ACL denied"),
+            (status = 422, description = "Missing OOBI — resolve sender's OOBI first via POST /resolve")
+        )
+    )]
     pub async fn process_message(
         body: String,
         data: web::Data<Arc<MessageBox>>,
@@ -329,6 +459,20 @@ mod http_handlers {
         })
     }
 
+    /// Register OOBI reply events.
+    ///
+    /// Submit a stream of CESR-encoded signed reply messages (location scheme OOBIs)
+    /// to register endpoint identifiers.
+    #[utoipa::path(
+        post,
+        path = "/register",
+        tag = "KERI",
+        request_body(content = String, content_type = "application/octet-stream",
+                     description = "CESR stream of signed reply messages"),
+        responses(
+            (status = 200, description = "OOBIs registered successfully")
+        )
+    )]
     pub async fn register(
         body: web::Bytes,
         data: web::Data<Arc<MessageBox>>,
@@ -342,6 +486,21 @@ mod http_handlers {
             .body(()))
     }
 
+    /// Resolve an OOBI.
+    ///
+    /// Submit an OOBI URL string. The server will resolve it to fetch the
+    /// identifier's Key Event Log (KEL), which is required before verifying
+    /// messages from that identifier.
+    #[utoipa::path(
+        post,
+        path = "/resolve",
+        tag = "KERI",
+        request_body(content = String, content_type = "text/plain",
+                     description = "OOBI URL to resolve"),
+        responses(
+            (status = 200, description = "OOBI resolved successfully")
+        )
+    )]
     pub async fn resolve_oobi(
         body: web::Bytes,
         data: web::Data<Arc<MessageBox>>,
@@ -353,6 +512,22 @@ mod http_handlers {
         Ok(HttpResponse::Ok().finish())
     }
 
+    /// Retrieve async response by SAID.
+    ///
+    /// When `POST /` returns 202, the response is not yet ready. Poll this
+    /// endpoint with the SAID from the 202 response to retrieve it later.
+    #[utoipa::path(
+        get,
+        path = "/messages/{said}",
+        tag = "KERI",
+        params(
+            ("said" = String, Path, description = "Self-Addressing Identifier of the pending response")
+        ),
+        responses(
+            (status = 200, description = "Response is available"),
+            (status = 500, description = "Unknown response SAID")
+        )
+    )]
     pub async fn get_response(
         said: web::Path<SelfAddressingIdentifier>,
         data: web::Data<Arc<MessageBox>>,
@@ -367,10 +542,13 @@ mod http_handlers {
         Ok(HttpResponse::Ok().finish())
     }
 
-    #[derive(serde::Deserialize)]
+    #[derive(serde::Deserialize, utoipa::IntoParams)]
     pub struct ChallengeQuery {
+        /// `registration` for first-time signup, `identification` for login.
         purpose: Option<String>,
+        /// Your OOBI as a JSON string. The AID is extracted automatically.
         oobi: String,
+        /// Optional invite token for invite-only servers.
         invite_token: Option<String>,
     }
 
@@ -408,6 +586,27 @@ mod http_handlers {
         }
     }
 
+    /// Request signed DauthZ challenge bound to an OOBI.
+    ///
+    /// The server will parse the OOBI to extract the entity's AID, resolve it
+    /// to cache the KEL, create a challenge bound to that AID, sign it with
+    /// the service's KERI key, and return the signed challenge as a CESR stream.
+    ///
+    /// Use `purpose=registration` for first-time signup (provisions a mailbox)
+    /// or `purpose=identification` for login (issues a session token).
+    ///
+    /// **Requires `dauthz_state_dir` to be configured on the server.**
+    #[utoipa::path(
+        get,
+        path = "/auth/challenge",
+        tag = "Authentication",
+        params(ChallengeQuery),
+        responses(
+            (status = 200, description = "CESR stream: JSON challenge payload + nontransferable receipt couples",
+             content_type = "text/plain", body = String),
+            (status = 404, description = "Authentication not configured on this server")
+        )
+    )]
     pub async fn auth_challenge(
         query: web::Query<ChallengeQuery>,
         data: web::Data<Arc<MessageBox>>,
@@ -463,11 +662,34 @@ mod http_handlers {
 
     /// Payload inside the CESR-signed envelope for auth response.
     /// Only the nonce is needed — the server already knows the bound AID.
-    #[derive(serde::Deserialize)]
-    struct AuthResponsePayload {
+    #[derive(serde::Deserialize, utoipa::ToSchema)]
+    pub(crate) struct AuthResponsePayload {
         nonce: String,
     }
 
+    /// Submit signed challenge response.
+    ///
+    /// Submit a CESR-signed response to complete DauthZ authentication.
+    /// The body is a raw CESR stream — a JSON payload signed with your KERI keys.
+    /// The JSON payload inside only needs the nonce from the challenge.
+    /// On **registration**: provisions a mailbox, returns account info.
+    /// On **identification**: issues a session token (1hr expiry).
+    #[utoipa::path(
+        post,
+        path = "/auth/respond",
+        tag = "Authentication",
+        request_body(content = String, content_type = "text/plain",
+                     description = "CESR-encoded payload with attached signatures containing the challenge nonce"),
+        responses(
+            (status = 201, description = "Registration successful — mailbox provisioned",
+             body = RegistrationResponse),
+            (status = 200, description = "Identification successful — session token issued",
+             body = AuthenticatedResponse),
+            (status = 401, description = "Invalid challenge response",
+             body = AuthErrorResponse),
+            (status = 404, description = "Authentication not configured on this server")
+        )
+    )]
     pub async fn auth_respond(
         body: String,
         data: web::Data<Arc<MessageBox>>,
@@ -551,6 +773,20 @@ mod http_handlers {
         }
     }
 
+    /// Revoke session.
+    ///
+    /// Revoke the current session token, logging out the client.
+    #[utoipa::path(
+        delete,
+        path = "/auth/session",
+        tag = "Authentication",
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Session revoked"),
+            (status = 401, description = "Missing or invalid Authorization header"),
+            (status = 404, description = "Authentication not configured on this server")
+        )
+    )]
     pub async fn auth_revoke(
         req: actix_web::HttpRequest,
         data: web::Data<Arc<MessageBox>>,
@@ -573,6 +809,20 @@ mod http_handlers {
         Ok(HttpResponse::Ok().finish())
     }
 
+    /// Get mailbox metadata.
+    ///
+    /// Returns the mailbox metadata for the authenticated AID.
+    #[utoipa::path(
+        get,
+        path = "/mailbox",
+        tag = "Mailbox",
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Mailbox metadata", body = crate::mailbox::MailboxMetadata),
+            (status = 401, description = "Missing or invalid session token"),
+            (status = 404, description = "Mailbox not found (or auth not configured)")
+        )
+    )]
     pub async fn get_mailbox(
         req: actix_web::HttpRequest,
         data: web::Data<Arc<MessageBox>>,
@@ -608,6 +858,20 @@ mod http_handlers {
         }
     }
 
+    /// Delete mailbox.
+    ///
+    /// Permanently delete the mailbox for the authenticated AID.
+    /// This removes all messages, ACL tokens, and associated data.
+    #[utoipa::path(
+        delete,
+        path = "/mailbox",
+        tag = "Mailbox",
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Mailbox deleted"),
+            (status = 401, description = "Missing or invalid session token")
+        )
+    )]
     pub async fn delete_mailbox(
         req: actix_web::HttpRequest,
         data: web::Data<Arc<MessageBox>>,
@@ -634,6 +898,23 @@ mod http_handlers {
         Ok(HttpResponse::Ok().finish())
     }
 
+    /// Upgrade to WebSocket connection.
+    ///
+    /// Upgrade the HTTP connection to a WebSocket for real-time messaging.
+    /// Server sends ping every 30 seconds; client must respond with pong.
+    /// Connection is closed after 60 seconds without a pong.
+    #[utoipa::path(
+        get,
+        path = "/ws",
+        tag = "WebSocket",
+        params(
+            ("token" = String, Query, description = "Session token obtained from POST /auth/respond")
+        ),
+        responses(
+            (status = 101, description = "WebSocket upgrade successful"),
+            (status = 401, description = "Missing or invalid session token")
+        )
+    )]
     pub async fn ws_upgrade(
         req: actix_web::HttpRequest,
         stream: web::Payload,
@@ -665,11 +946,27 @@ mod http_handlers {
         })
     }
 
-    #[derive(serde::Deserialize)]
+    #[derive(serde::Deserialize, utoipa::ToSchema)]
     pub struct AclPayload {
+        /// Complete set of whitelist tokens (replaces existing set).
         tokens: Vec<String>,
     }
 
+    /// Set ACL whitelist tokens.
+    ///
+    /// Replace the entire ACL token set for the authenticated AID's mailbox.
+    /// Tokens are opaque hex-encoded HMAC-SHA256 values computed client-side.
+    #[utoipa::path(
+        put,
+        path = "/mailbox/acl",
+        tag = "Mailbox",
+        security(("bearerAuth" = [])),
+        request_body = AclPayload,
+        responses(
+            (status = 200, description = "ACL tokens updated"),
+            (status = 401, description = "Missing or invalid session token")
+        )
+    )]
     pub async fn set_acl(
         req: actix_web::HttpRequest,
         body: web::Json<AclPayload>,
@@ -700,6 +997,19 @@ mod http_handlers {
         Ok(HttpResponse::Ok().finish())
     }
 
+    /// Get ACL whitelist tokens.
+    ///
+    /// Returns all ACL tokens currently set for the authenticated AID's mailbox.
+    #[utoipa::path(
+        get,
+        path = "/mailbox/acl",
+        tag = "Mailbox",
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Current ACL tokens", body = AclTokensResponse),
+            (status = 401, description = "Missing or invalid session token")
+        )
+    )]
     pub async fn get_acl(
         req: actix_web::HttpRequest,
         data: web::Data<Arc<MessageBox>>,
@@ -727,12 +1037,23 @@ mod http_handlers {
 
     // --- Channel endpoints ---
 
-    #[derive(serde::Deserialize)]
+    #[derive(serde::Deserialize, utoipa::IntoParams)]
     pub struct ChannelMessagesQuery {
+        /// Start sequence number (0 = from beginning).
         s: Option<usize>,
     }
 
     /// List all channels the authenticated user is a member of.
+    #[utoipa::path(
+        get,
+        path = "/channels",
+        tag = "Channels",
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "List of channels", body = Vec<crate::channel::Channel>),
+            (status = 401, description = "Missing or invalid session token")
+        )
+    )]
     pub async fn list_channels(
         req: actix_web::HttpRequest,
         data: web::Data<Arc<MessageBox>>,
@@ -759,6 +1080,16 @@ mod http_handlers {
     }
 
     /// List pending channel invites for the authenticated user.
+    #[utoipa::path(
+        get,
+        path = "/channels/pending",
+        tag = "Channels",
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Pending invites", body = Vec<PendingInviteItem>),
+            (status = 401, description = "Missing or invalid session token")
+        )
+    )]
     pub async fn pending_invites(
         req: actix_web::HttpRequest,
         data: web::Data<Arc<MessageBox>>,
@@ -822,6 +1153,20 @@ mod http_handlers {
     }
 
     /// Get channel metadata by SAID (authenticated, must be member).
+    #[utoipa::path(
+        get,
+        path = "/channels/{said}",
+        tag = "Channels",
+        security(("bearerAuth" = [])),
+        params(
+            ("said" = String, Path, description = "Channel SAID")
+        ),
+        responses(
+            (status = 200, description = "Channel metadata", body = crate::channel::Channel),
+            (status = 401, description = "Missing or invalid session token / not a member"),
+            (status = 404, description = "Channel not found")
+        )
+    )]
     pub async fn get_channel(
         said: web::Path<String>,
         req: actix_web::HttpRequest,
@@ -862,6 +1207,20 @@ mod http_handlers {
     }
 
     /// Get channel messages by sequence number (authenticated, must be member).
+    #[utoipa::path(
+        get,
+        path = "/channels/{said}/messages",
+        tag = "Channels",
+        security(("bearerAuth" = [])),
+        params(
+            ("said" = String, Path, description = "Channel SAID"),
+            ChannelMessagesQuery
+        ),
+        responses(
+            (status = 200, description = "Channel messages", body = ChannelMessagesResponse),
+            (status = 401, description = "Missing or invalid session token / not a member")
+        )
+    )]
     pub async fn get_channel_messages(
         said: web::Path<String>,
         query: web::Query<ChannelMessagesQuery>,
@@ -913,6 +1272,14 @@ mod http_handlers {
     }
 
     /// List all public broadcast channels on this instance (no auth).
+    #[utoipa::path(
+        get,
+        path = "/broadcasts",
+        tag = "Channels",
+        responses(
+            (status = 200, description = "Public broadcast channels", body = Vec<crate::channel::Channel>)
+        )
+    )]
     pub async fn list_broadcasts(
         data: web::Data<Arc<MessageBox>>,
     ) -> Result<HttpResponse, ApiError> {
@@ -929,6 +1296,19 @@ mod http_handlers {
     }
 
     /// Discover a broadcast channel by owner AID and topic name (no auth).
+    #[utoipa::path(
+        get,
+        path = "/broadcast/{aid}/{topic}",
+        tag = "Channels",
+        params(
+            ("aid" = String, Path, description = "Owner AID"),
+            ("topic" = String, Path, description = "Topic name")
+        ),
+        responses(
+            (status = 200, description = "Broadcast channel metadata", body = crate::channel::Channel),
+            (status = 404, description = "Broadcast not found")
+        )
+    )]
     pub async fn discover_broadcast(
         path: web::Path<(String, String)>,
         data: web::Data<Arc<MessageBox>>,
@@ -953,6 +1333,20 @@ mod http_handlers {
     }
 
     /// Get public broadcast messages (no auth required).
+    #[utoipa::path(
+        get,
+        path = "/broadcast/{aid}/{topic}/messages",
+        tag = "Channels",
+        params(
+            ("aid" = String, Path, description = "Owner AID"),
+            ("topic" = String, Path, description = "Topic name"),
+            ChannelMessagesQuery
+        ),
+        responses(
+            (status = 200, description = "Broadcast messages", body = ChannelMessagesResponse),
+            (status = 404, description = "Broadcast not found")
+        )
+    )]
     pub async fn get_broadcast_messages(
         path: web::Path<(String, String)>,
         query: web::Query<ChannelMessagesQuery>,
@@ -989,13 +1383,23 @@ mod http_handlers {
     /// EMQX HTTP authorization hook.
     /// Called by EMQX on each PUBLISH to check sender-level ACL.
     /// Only enforces ACL for publishes to `msg/inbox/{recipient_aid}`.
-    #[derive(serde::Deserialize)]
+    #[derive(serde::Deserialize, utoipa::ToSchema)]
     pub struct MqttAuthzRequest {
         clientid: String,
         topic: String,
         action: String,
     }
 
+    /// EMQX HTTP authorization hook for MQTT ACL enforcement.
+    #[utoipa::path(
+        post,
+        path = "/mqtt/authz",
+        tag = "MQTT",
+        request_body = MqttAuthzRequest,
+        responses(
+            (status = 200, description = "Authorization result", body = MqttAuthzResult)
+        )
+    )]
     pub async fn mqtt_authz(
         body: web::Json<MqttAuthzRequest>,
         data: web::Data<Arc<MessageBox>>,
@@ -1072,9 +1476,20 @@ mod http_handlers {
     // Formal Mail federation endpoints
     // -----------------------------------------------------------------------
 
-    /// POST /mail/deliver — receive a CESR-signed mail envelope from a remote mesagkesto.
-    /// This is a server-to-server federation endpoint (no Bearer auth — sender authenticates
-    /// via CESR signature in the envelope).
+    /// Deliver mail envelope (server-to-server federation).
+    ///
+    /// Receive a CESR-signed mail envelope from a remote mesagkesto.
+    /// No Bearer auth — sender authenticates via CESR signature in the envelope.
+    #[utoipa::path(
+        post,
+        path = "/mail/deliver",
+        tag = "Mail",
+        request_body = serde_json::Value,
+        responses(
+            (status = 200, description = "Mail delivered, receipt returned", body = MailDeliveryReceipt),
+            (status = 404, description = "No recipients found on this instance")
+        )
+    )]
     pub async fn mail_deliver(
         body: web::Json<serde_json::Value>,
         data: web::Data<Arc<MessageBox>>,
@@ -1143,7 +1558,16 @@ mod http_handlers {
         Ok(HttpResponse::Ok().json(receipt))
     }
 
-    /// POST /mail/receipt — receive a read receipt from a remote mesagkesto.
+    /// Receive read receipt from remote mesagkesto (server-to-server).
+    #[utoipa::path(
+        post,
+        path = "/mail/receipt",
+        tag = "Mail",
+        request_body = serde_json::Value,
+        responses(
+            (status = 200, description = "Receipt stored")
+        )
+    )]
     pub async fn mail_receipt(
         body: web::Json<serde_json::Value>,
         data: web::Data<Arc<MessageBox>>,
@@ -1182,11 +1606,24 @@ mod http_handlers {
     }
 
     /// GET /mail/messages — client polls for pending mail (authenticated).
-    #[derive(serde::Deserialize)]
+    #[derive(serde::Deserialize, utoipa::IntoParams)]
     pub struct MailMessagesQuery {
+        /// Sequence number to start from (0 = all).
         from_seq: Option<u64>,
     }
 
+    /// Get pending mail messages (authenticated).
+    #[utoipa::path(
+        get,
+        path = "/mail/messages",
+        tag = "Mail",
+        security(("bearerAuth" = [])),
+        params(MailMessagesQuery),
+        responses(
+            (status = 200, description = "Mail messages", body = Vec<serde_json::Value>),
+            (status = 401, description = "Missing or invalid session token")
+        )
+    )]
     pub async fn mail_get_messages(
         req: actix_web::HttpRequest,
         query: web::Query<MailMessagesQuery>,
@@ -1228,7 +1665,20 @@ mod http_handlers {
         Ok(HttpResponse::Ok().json(messages))
     }
 
-    /// DELETE /mail/messages/{seq} — client acknowledges receipt of a mail message.
+    /// Acknowledge receipt of a mail message.
+    #[utoipa::path(
+        delete,
+        path = "/mail/messages/{seq}",
+        tag = "Mail",
+        security(("bearerAuth" = [])),
+        params(
+            ("seq" = u64, Path, description = "Mail message sequence number")
+        ),
+        responses(
+            (status = 200, description = "Mail message deleted"),
+            (status = 401, description = "Missing or invalid session token")
+        )
+    )]
     pub async fn mail_delete_message(
         req: actix_web::HttpRequest,
         path: web::Path<u64>,
@@ -1269,7 +1719,25 @@ mod http_handlers {
     // Storage Vault endpoints
     // -----------------------------------------------------------------------
 
-    /// PUT /vault/{said} — upload a content-addressed blob (authenticated).
+    /// Upload a content-addressed blob (authenticated).
+    ///
+    /// The SAID must match the SHA-256 hash of the content.
+    #[utoipa::path(
+        put,
+        path = "/vault/{said}",
+        tag = "Vault",
+        security(("bearerAuth" = [])),
+        params(
+            ("said" = String, Path, description = "SHA-256 hash of the content (hex-encoded)")
+        ),
+        request_body(content = Vec<u8>, content_type = "application/octet-stream",
+                     description = "Binary blob content"),
+        responses(
+            (status = 201, description = "Blob stored"),
+            (status = 400, description = "SAID does not match content hash"),
+            (status = 401, description = "Missing or invalid session token")
+        )
+    )]
     pub async fn vault_put(
         req: actix_web::HttpRequest,
         path: web::Path<String>,
@@ -1319,8 +1787,22 @@ mod http_handlers {
         Ok(HttpResponse::Created().finish())
     }
 
-    /// GET /vault/{said} — download a blob by SAID.
-    /// Publicly accessible (content-addressed = knowing the SAID is authorization).
+    /// Download a blob by SAID.
+    ///
+    /// Publicly accessible — knowing the SAID is authorization (content-addressed).
+    #[utoipa::path(
+        get,
+        path = "/vault/{said}",
+        tag = "Vault",
+        params(
+            ("said" = String, Path, description = "SHA-256 hash of the content (hex-encoded)")
+        ),
+        responses(
+            (status = 200, description = "Blob content", content_type = "application/octet-stream",
+             body = Vec<u8>),
+            (status = 404, description = "Blob not found")
+        )
+    )]
     pub async fn vault_get(
         path: web::Path<String>,
         data: web::Data<Arc<MessageBox>>,
@@ -1386,11 +1868,25 @@ mod http_handlers {
         Ok(())
     }
 
-    #[derive(serde::Deserialize)]
+    #[derive(serde::Deserialize, utoipa::ToSchema)]
     pub struct CreateInviteBody {
+        /// Optional human-readable label for the invite.
         label: Option<String>,
     }
 
+    /// Create invitation token (admin only).
+    #[utoipa::path(
+        post,
+        path = "/admin/invites",
+        tag = "Admin",
+        security(("bearerAuth" = [])),
+        request_body = Option<CreateInviteBody>,
+        responses(
+            (status = 201, description = "Invite created", body = crate::registration::InviteToken),
+            (status = 401, description = "Missing or invalid session token"),
+            (status = 403, description = "Only admin AID can access this endpoint")
+        )
+    )]
     pub async fn admin_create_invite(
         req: actix_web::HttpRequest,
         data: web::Data<Arc<MessageBox>>,
@@ -1406,6 +1902,18 @@ mod http_handlers {
         Ok(HttpResponse::Created().json(invite))
     }
 
+    /// List all active invite tokens (admin only).
+    #[utoipa::path(
+        get,
+        path = "/admin/invites",
+        tag = "Admin",
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Active invites", body = Vec<crate::registration::InviteToken>),
+            (status = 401, description = "Missing or invalid session token"),
+            (status = 403, description = "Only admin AID can access this endpoint")
+        )
+    )]
     pub async fn admin_list_invites(
         req: actix_web::HttpRequest,
         data: web::Data<Arc<MessageBox>>,
@@ -1415,6 +1923,22 @@ mod http_handlers {
         Ok(HttpResponse::Ok().json(invites))
     }
 
+    /// Revoke invitation token (admin only).
+    #[utoipa::path(
+        delete,
+        path = "/admin/invites/{token}",
+        tag = "Admin",
+        security(("bearerAuth" = [])),
+        params(
+            ("token" = String, Path, description = "Invite token to revoke")
+        ),
+        responses(
+            (status = 200, description = "Invite revoked"),
+            (status = 401, description = "Missing or invalid session token"),
+            (status = 403, description = "Only admin AID can access this endpoint"),
+            (status = 404, description = "Token not found")
+        )
+    )]
     pub async fn admin_revoke_invite(
         req: actix_web::HttpRequest,
         path: web::Path<String>,
@@ -1430,11 +1954,25 @@ mod http_handlers {
         }
     }
 
-    #[derive(serde::Deserialize)]
+    #[derive(serde::Deserialize, utoipa::ToSchema)]
     pub struct AddWhitelistBody {
+        /// AID to add to the registration whitelist.
         aid: String,
     }
 
+    /// Add AID to registration whitelist (admin only).
+    #[utoipa::path(
+        post,
+        path = "/admin/whitelist",
+        tag = "Admin",
+        security(("bearerAuth" = [])),
+        request_body = AddWhitelistBody,
+        responses(
+            (status = 201, description = "AID added to whitelist"),
+            (status = 401, description = "Missing or invalid session token"),
+            (status = 403, description = "Only admin AID can access this endpoint")
+        )
+    )]
     pub async fn admin_add_whitelist(
         req: actix_web::HttpRequest,
         data: web::Data<Arc<MessageBox>>,
@@ -1448,6 +1986,18 @@ mod http_handlers {
         Ok(HttpResponse::Created().finish())
     }
 
+    /// List whitelisted AIDs (admin only).
+    #[utoipa::path(
+        get,
+        path = "/admin/whitelist",
+        tag = "Admin",
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Whitelisted AIDs", body = Vec<String>),
+            (status = 401, description = "Missing or invalid session token"),
+            (status = 403, description = "Only admin AID can access this endpoint")
+        )
+    )]
     pub async fn admin_list_whitelist(
         req: actix_web::HttpRequest,
         data: web::Data<Arc<MessageBox>>,
@@ -1457,6 +2007,22 @@ mod http_handlers {
         Ok(HttpResponse::Ok().json(aids))
     }
 
+    /// Remove AID from whitelist (admin only).
+    #[utoipa::path(
+        delete,
+        path = "/admin/whitelist/{aid}",
+        tag = "Admin",
+        security(("bearerAuth" = [])),
+        params(
+            ("aid" = String, Path, description = "AID to remove from whitelist")
+        ),
+        responses(
+            (status = 200, description = "AID removed from whitelist"),
+            (status = 401, description = "Missing or invalid session token"),
+            (status = 403, description = "Only admin AID can access this endpoint"),
+            (status = 404, description = "AID not found in whitelist")
+        )
+    )]
     pub async fn admin_remove_whitelist(
         req: actix_web::HttpRequest,
         path: web::Path<String>,
