@@ -28,6 +28,7 @@ pub enum AuthMessage {
         purpose: CeremonyPurpose,
         entity_aid: String,
         entity_oobi: String,
+        invite_token: Option<String>,
         sender: oneshot::Sender<Result<Vec<u8>, MessageboxError>>,
     },
     HandleResponse {
@@ -47,7 +48,11 @@ pub enum AuthMessage {
 
 #[derive(Debug, Clone)]
 pub enum AuthResult {
-    Registered { aid: String, account_id: String },
+    Registered {
+        aid: String,
+        account_id: String,
+        invite_token: Option<String>,
+    },
     Authenticated { session: Session },
     Invalid(String),
 }
@@ -57,6 +62,7 @@ struct BoundEntity {
     aid: String,
     #[allow(dead_code)]
     oobi: String,
+    invite_token: Option<String>,
 }
 
 struct AuthActor {
@@ -110,6 +116,7 @@ impl AuthActor {
                 purpose,
                 entity_aid,
                 entity_oobi,
+                invite_token,
                 sender,
             } => {
                 debug!(
@@ -135,6 +142,7 @@ impl AuthActor {
                             BoundEntity {
                                 aid: entity_aid,
                                 oobi: entity_oobi,
+                                invite_token,
                             },
                         );
 
@@ -174,7 +182,11 @@ impl AuthActor {
                         account_id,
                     }) => {
                         info!(aid = %aid, account_id = %account_id, "Entity registered via DauthZ");
-                        Ok(AuthResult::Registered { aid, account_id })
+                        Ok(AuthResult::Registered {
+                            aid,
+                            account_id,
+                            invite_token: bound.invite_token,
+                        })
                     }
                     Ok(dauthz_core::verification::VerificationResult::Authenticated {
                         aid,
@@ -265,12 +277,14 @@ impl AuthHandle {
         purpose: CeremonyPurpose,
         entity_aid: String,
         entity_oobi: String,
+        invite_token: Option<String>,
     ) -> Result<Vec<u8>, MessageboxError> {
         let (send, recv) = oneshot::channel();
         let msg = AuthMessage::CreateChallenge {
             purpose,
             entity_aid,
             entity_oobi,
+            invite_token,
             sender: send,
         };
         let _ = self.sender.send(msg).await;

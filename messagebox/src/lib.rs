@@ -15,6 +15,7 @@ pub mod messagebox;
 pub mod messagebox_listener;
 pub mod notifier;
 pub mod oobis;
+pub mod registration;
 mod responses_store;
 pub mod session;
 pub mod storage;
@@ -60,6 +61,8 @@ pub enum MessageboxError {
     AclDenied(String),
     #[error("Database error: {0}")]
     DbError(String),
+    #[error("Registration denied: {0}")]
+    RegistrationDenied(String),
 }
 
 pub fn register_token(id: String, token: String) -> MessageType {

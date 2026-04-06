@@ -63,6 +63,14 @@ const MAIL_RECEIPTS: TableDefinition<(&str, &str), &str> = TableDefinition::new(
 /// Table: said (content hash) -> blob (bytes)
 const VAULT_BLOBS: TableDefinition<&str, &[u8]> = TableDefinition::new("vault_blobs");
 
+// --- Registration tables ---
+
+/// Table: invite_token_hex -> invite_metadata_json
+const INVITE_TOKENS: TableDefinition<&str, &str> = TableDefinition::new("invite_tokens");
+
+/// Table: aid -> "1" (presence table)
+const AID_WHITELIST: TableDefinition<&str, &str> = TableDefinition::new("aid_whitelist");
+
 #[derive(Debug)]
 pub struct DbError(Box<dyn std::error::Error + Send + Sync>);
 
@@ -136,6 +144,8 @@ impl Db {
         write_txn.open_table(MAIL_SEQUENCES)?;
         write_txn.open_table(MAIL_RECEIPTS)?;
         write_txn.open_table(VAULT_BLOBS)?;
+        write_txn.open_table(INVITE_TOKENS)?;
+        write_txn.open_table(AID_WHITELIST)?;
         write_txn.commit()?;
         debug!("Database tables initialized");
         Ok(())
@@ -714,5 +724,83 @@ impl Db {
         let read_txn = self.inner.begin_read()?;
         let table = read_txn.open_table(VAULT_BLOBS)?;
         Ok(table.get(said)?.is_some())
+    }
+
+    // --- Registration: Invite Tokens ---
+
+    pub fn save_invite_token(&self, token: &str, metadata_json: &str) -> Result<(), DbError> {
+        let write_txn = self.inner.begin_write()?;
+        {
+            let mut table = write_txn.open_table(INVITE_TOKENS)?;
+            table.insert(token, metadata_json)?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    pub fn get_invite_token(&self, token: &str) -> Result<Option<String>, DbError> {
+        let read_txn = self.inner.begin_read()?;
+        let table = read_txn.open_table(INVITE_TOKENS)?;
+        Ok(table.get(token)?.map(|v| v.value().to_string()))
+    }
+
+    pub fn delete_invite_token(&self, token: &str) -> Result<(), DbError> {
+        let write_txn = self.inner.begin_write()?;
+        {
+            let mut table = write_txn.open_table(INVITE_TOKENS)?;
+            table.remove(token)?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    pub fn list_invite_tokens(&self) -> Result<Vec<String>, DbError> {
+        let read_txn = self.inner.begin_read()?;
+        let table = read_txn.open_table(INVITE_TOKENS)?;
+        let mut values = Vec::new();
+        for entry in table.iter()? {
+            let (_, v) = entry?;
+            values.push(v.value().to_string());
+        }
+        Ok(values)
+    }
+
+    // --- Registration: AID Whitelist ---
+
+    pub fn save_whitelist_entry(&self, aid: &str) -> Result<(), DbError> {
+        let write_txn = self.inner.begin_write()?;
+        {
+            let mut table = write_txn.open_table(AID_WHITELIST)?;
+            table.insert(aid, "1")?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    pub fn get_whitelist_entry(&self, aid: &str) -> Result<Option<String>, DbError> {
+        let read_txn = self.inner.begin_read()?;
+        let table = read_txn.open_table(AID_WHITELIST)?;
+        Ok(table.get(aid)?.map(|v| v.value().to_string()))
+    }
+
+    pub fn delete_whitelist_entry(&self, aid: &str) -> Result<(), DbError> {
+        let write_txn = self.inner.begin_write()?;
+        {
+            let mut table = write_txn.open_table(AID_WHITELIST)?;
+            table.remove(aid)?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    pub fn list_whitelist_entries(&self) -> Result<Vec<String>, DbError> {
+        let read_txn = self.inner.begin_read()?;
+        let table = read_txn.open_table(AID_WHITELIST)?;
+        let mut keys = Vec::new();
+        for entry in table.iter()? {
+            let (k, _) = entry?;
+            keys.push(k.value().to_string());
+        }
+        Ok(keys)
     }
 }

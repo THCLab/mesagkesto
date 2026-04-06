@@ -42,6 +42,12 @@ pub struct Config {
 
     /// MQTT broker WebSocket URL (e.g. ws://host:8083/mqtt)
     mqtt_url: Option<String>,
+
+    /// Registration mode: "public" (default) or "invite_only"
+    registration_mode: Option<String>,
+
+    /// AID granted admin privileges (auto-provisioned at startup)
+    admin_aid: Option<String>,
 }
 
 #[derive(Debug, Parser, Serialize)]
@@ -105,6 +111,8 @@ async fn main() -> Result<()> {
         cfg.server_key,
         cfg.dauthz_state_dir.as_deref(),
         cfg.jwt_secret.clone(),
+        cfg.registration_mode.as_deref(),
+        cfg.admin_aid.clone(),
     )
     .await?;
     let messagebox_oobi = data.oobi();

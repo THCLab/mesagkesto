@@ -17,6 +17,7 @@ use tracing::{debug, info};
 use crate::{
     acl::AclHandle, auth::AuthHandle, channel::ChannelHandle, connection::ConnectionManager,
     db::Db, mailbox::MailboxHandle, notifier::NotifyHandle, oobis::OobiHandle,
+    registration::{RegistrationHandle, RegistrationMode},
     responses_store::ResponsesHandle, storage::StorageHandle, validate::ValidateHandle,
     verify::VerifyHandle, MessageboxError,
 };
@@ -37,6 +38,8 @@ pub struct MessageBox {
     pub storage_handle: StorageHandle,
     pub connection_manager: Addr<ConnectionManager>,
     pub jwt_secret: Option<String>,
+    pub registration_handle: RegistrationHandle,
+    pub admin_aid: Option<String>,
 }
 
 impl MessageBox {
@@ -50,6 +53,8 @@ impl MessageBox {
         server_key: Option<String>,
         dauthz_state_dir: Option<&Path>,
         jwt_secret: Option<String>,
+        registration_mode: Option<&str>,
+        admin_aid: Option<String>,
     ) -> Result<Self, MessageboxError> {
         debug!("Setting up messagebox");
         let signer = Arc::new(
@@ -110,6 +115,16 @@ impl MessageBox {
             debug!("DauthZ authentication disabled (no state directory)");
             None
         };
+        let reg_mode = RegistrationMode::from_str_config(registration_mode);
+        let registration_handle = RegistrationHandle::new(db.clone(), reg_mode);
+
+        // Auto-provision admin mailbox if admin_aid is configured
+        if let Some(ref admin) = admin_aid {
+            info!(admin_aid = %admin, "Auto-provisioning admin mailbox");
+            let _ = mailbox_handle.provision(admin.clone()).await;
+            let _ = mailbox_handle.activate(admin.clone()).await;
+        }
+
         let response_handle = ResponsesHandle::new(db);
         let validator_handle = ValidateHandle::new(
             storage_handle.clone(),
@@ -138,6 +153,8 @@ impl MessageBox {
             storage_handle,
             connection_manager,
             jwt_secret,
+            registration_handle,
+            admin_aid,
         })
     }
 

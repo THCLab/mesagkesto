@@ -142,6 +142,31 @@ impl MessageBoxListener {
                     "/vault/{said}",
                     actix_web::web::get().to(http_handlers::vault_get),
                 )
+                // Admin endpoints (protected by admin AID session)
+                .route(
+                    "/admin/invites",
+                    actix_web::web::post().to(http_handlers::admin_create_invite),
+                )
+                .route(
+                    "/admin/invites",
+                    actix_web::web::get().to(http_handlers::admin_list_invites),
+                )
+                .route(
+                    "/admin/invites/{token}",
+                    actix_web::web::delete().to(http_handlers::admin_revoke_invite),
+                )
+                .route(
+                    "/admin/whitelist",
+                    actix_web::web::post().to(http_handlers::admin_add_whitelist),
+                )
+                .route(
+                    "/admin/whitelist",
+                    actix_web::web::get().to(http_handlers::admin_list_whitelist),
+                )
+                .route(
+                    "/admin/whitelist/{aid}",
+                    actix_web::web::delete().to(http_handlers::admin_remove_whitelist),
+                )
         })
         .bind(addr)?
         .run())
@@ -346,6 +371,7 @@ mod http_handlers {
     pub struct ChallengeQuery {
         purpose: Option<String>,
         oobi: String,
+        invite_token: Option<String>,
     }
 
     /// Extract the AID from an OOBI JSON string (single object or array).
@@ -405,12 +431,25 @@ mod http_handlers {
             _ => dauthz_core::CeremonyPurpose::Identification,
         };
 
+        // For registration requests, check registration access policy
+        if purpose_str == "registration" {
+            data.registration_handle
+                .check_access(entity_aid.clone(), query.invite_token.clone())
+                .await
+                .map_err(|e| ApiError::RegistrationDenied(e.to_string()))?;
+        }
+
         // Resolve the entity's OOBI(s) early so KEL is cached for later verification.
         // Handles both single OOBI objects and arrays (LocationScheme + EndRole entries).
         data.resolve_oobi_multi(&query.oobi).await?;
 
         let cesr_stream = auth
-            .create_challenge(purpose, entity_aid.clone(), query.oobi.clone())
+            .create_challenge(
+                purpose,
+                entity_aid.clone(),
+                query.oobi.clone(),
+                query.invite_token.clone(),
+            )
             .await?;
         debug!(
             entity_aid = %entity_aid,
@@ -463,8 +502,16 @@ mod http_handlers {
         debug!(nonce = %payload.nonce, verified = verified, "POST /auth/respond verification complete");
 
         match auth.handle_response(payload.nonce, verified).await? {
-            AuthResult::Registered { aid, account_id } => {
+            AuthResult::Registered {
+                aid,
+                account_id,
+                invite_token,
+            } => {
                 debug!(aid = %aid, account_id = %account_id, "POST /auth/respond -> 201 registered");
+                // Consume the invite token if one was used
+                if let Some(token) = invite_token {
+                    let _ = data.registration_handle.consume_invite(token).await;
+                }
                 let _ = data.mailbox_handle.provision(aid.clone()).await;
                 Ok(HttpResponse::Created().json(
                     serde_json::json!({"status": "registered", "aid": aid, "account_id": account_id}),
@@ -1305,6 +1352,125 @@ mod http_handlers {
             }
         }
     }
+
+    // --- Admin endpoints ---
+
+    /// Validate that the request comes from the admin AID (via DauthZ session).
+    async fn validate_admin(
+        req: &actix_web::HttpRequest,
+        data: &web::Data<Arc<MessageBox>>,
+    ) -> Result<(), ApiError> {
+        let auth = data
+            .auth_handle
+            .as_ref()
+            .ok_or(ApiError::AuthNotConfigured)?;
+        let admin_aid = data
+            .admin_aid
+            .as_ref()
+            .ok_or(ApiError::Forbidden("admin not configured".to_string()))?;
+        let token = req
+            .headers()
+            .get("Authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .ok_or(ApiError::Unauthorized)?;
+        let session = auth
+            .validate_session(token)
+            .await
+            .ok_or(ApiError::Unauthorized)?;
+        if session.aid != *admin_aid {
+            return Err(ApiError::Forbidden(
+                "only the admin AID can access this endpoint".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    #[derive(serde::Deserialize)]
+    pub struct CreateInviteBody {
+        label: Option<String>,
+    }
+
+    pub async fn admin_create_invite(
+        req: actix_web::HttpRequest,
+        data: web::Data<Arc<MessageBox>>,
+        body: web::Json<Option<CreateInviteBody>>,
+    ) -> Result<HttpResponse, ApiError> {
+        validate_admin(&req, &data).await?;
+        let label = body.into_inner().and_then(|b| b.label);
+        let invite = data
+            .registration_handle
+            .create_invite(label)
+            .await
+            .map_err(ApiError::MessageboxError)?;
+        Ok(HttpResponse::Created().json(invite))
+    }
+
+    pub async fn admin_list_invites(
+        req: actix_web::HttpRequest,
+        data: web::Data<Arc<MessageBox>>,
+    ) -> Result<HttpResponse, ApiError> {
+        validate_admin(&req, &data).await?;
+        let invites = data.registration_handle.list_invites().await;
+        Ok(HttpResponse::Ok().json(invites))
+    }
+
+    pub async fn admin_revoke_invite(
+        req: actix_web::HttpRequest,
+        path: web::Path<String>,
+        data: web::Data<Arc<MessageBox>>,
+    ) -> Result<HttpResponse, ApiError> {
+        validate_admin(&req, &data).await?;
+        let token = path.into_inner();
+        let revoked = data.registration_handle.revoke_invite(token).await;
+        if revoked {
+            Ok(HttpResponse::Ok().json(serde_json::json!({"revoked": true})))
+        } else {
+            Ok(HttpResponse::NotFound().finish())
+        }
+    }
+
+    #[derive(serde::Deserialize)]
+    pub struct AddWhitelistBody {
+        aid: String,
+    }
+
+    pub async fn admin_add_whitelist(
+        req: actix_web::HttpRequest,
+        data: web::Data<Arc<MessageBox>>,
+        body: web::Json<AddWhitelistBody>,
+    ) -> Result<HttpResponse, ApiError> {
+        validate_admin(&req, &data).await?;
+        data.registration_handle
+            .add_whitelist(body.into_inner().aid)
+            .await
+            .map_err(ApiError::MessageboxError)?;
+        Ok(HttpResponse::Created().finish())
+    }
+
+    pub async fn admin_list_whitelist(
+        req: actix_web::HttpRequest,
+        data: web::Data<Arc<MessageBox>>,
+    ) -> Result<HttpResponse, ApiError> {
+        validate_admin(&req, &data).await?;
+        let aids = data.registration_handle.list_whitelist().await;
+        Ok(HttpResponse::Ok().json(aids))
+    }
+
+    pub async fn admin_remove_whitelist(
+        req: actix_web::HttpRequest,
+        path: web::Path<String>,
+        data: web::Data<Arc<MessageBox>>,
+    ) -> Result<HttpResponse, ApiError> {
+        validate_admin(&req, &data).await?;
+        let aid = path.into_inner();
+        let removed = data.registration_handle.remove_whitelist(aid).await;
+        if removed {
+            Ok(HttpResponse::Ok().json(serde_json::json!({"removed": true})))
+        } else {
+            Ok(HttpResponse::NotFound().finish())
+        }
+    }
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -1325,6 +1491,10 @@ pub enum ApiError {
     AuthNotConfigured,
     #[error("Unauthorized")]
     Unauthorized,
+    #[error("Forbidden: {0}")]
+    Forbidden(String),
+    #[error("Registration denied: {0}")]
+    RegistrationDenied(String),
 }
 
 impl ResponseError for ApiError {
@@ -1332,6 +1502,8 @@ impl ResponseError for ApiError {
         match self {
             ApiError::Unauthorized => StatusCode::UNAUTHORIZED,
             ApiError::AuthNotConfigured => StatusCode::NOT_FOUND,
+            ApiError::Forbidden(_) => StatusCode::FORBIDDEN,
+            ApiError::RegistrationDenied(_) => StatusCode::FORBIDDEN,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }

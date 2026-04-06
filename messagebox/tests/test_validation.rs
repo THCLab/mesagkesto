@@ -42,6 +42,8 @@ async fn test_validation() -> Result<(), Error> {
         Some(server_key),
         None,
         None,
+        None,
+        None,
     )
     .await
     .unwrap();

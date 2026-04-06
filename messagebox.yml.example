@@ -42,3 +42,16 @@ jwt_secret: "mesagkesto-dev-secret-change-me"
 # an mqtt_token (JWT) and this URL so clients can connect to EMQX
 # for real-time messaging instead of HTTP polling.
 mqtt_url: "ws://localhost:8083/mqtt"
+
+# Registration mode: "public" (default) or "invite_only".
+# In public mode, anyone with a KERI AID can register.
+# In invite_only mode, registration requires a valid invite token
+# or the AID must be in the server's whitelist.
+# registration_mode: "public"
+
+# Admin AID — the KERI identifier granted admin privileges.
+# When set, this AID's mailbox is auto-provisioned at startup.
+# The admin authenticates via normal DauthZ challenge/response
+# and can then manage invite tokens and the AID whitelist
+# via /admin/* endpoints.
+# admin_aid: "DAID..."
