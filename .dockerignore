@@ -1,0 +1,20 @@
+# Ignore Rust build artifacts (The main culprit)
+target/
+
+# Ignore Git history
+.git/
+.gitignore
+
+# Ignore IDE/Editor configs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Ignore local environment files
+.env
+.env.local
+
+# Ignore logs and temp files
+*.log
+tmp/
