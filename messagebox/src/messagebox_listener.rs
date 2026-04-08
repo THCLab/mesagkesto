@@ -1764,7 +1764,8 @@ pub(crate) mod http_handlers {
 
         // Verify the SAID matches the content hash
         use sha2::{Digest, Sha256};
-        let hash = format!("{:x}", Sha256::digest(&body));
+        let digest = Sha256::digest(&body);
+        let hash = digest.iter().map(|b| format!("{:02x}", b)).collect::<String>();
         if hash != said {
             return Ok(HttpResponse::BadRequest().json(serde_json::json!({
                 "error": "SAID does not match content hash",

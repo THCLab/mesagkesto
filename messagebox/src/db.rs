@@ -2,7 +2,7 @@ use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
 
-use redb::{Database, ReadableTable, TableDefinition};
+use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
 use tracing::{debug, info};
 
 /// Table: (mailbox_aid, seq_no) -> message_json_string

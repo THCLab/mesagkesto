@@ -45,12 +45,12 @@ impl NotifyActor {
                         "to": token,
                         });
                         match ureq::post("https://fcm.googleapis.com/fcm/send")
-                            .set("Authorization", &format!("key={}", self.server_key))
-                            .set("Content-Type", "application/json; charset=UTF-8")
+                            .header("Authorization", &format!("key={}", self.server_key))
+                            .header("Content-Type", "application/json; charset=UTF-8")
                             .send_json(body)
                         {
                             Ok(res) => {
-                                info!(identifier = %identifier, digest = %digest, status = res.status(), "FCM notification sent successfully");
+                                info!(identifier = %identifier, digest = %digest, status = %res.status(), "FCM notification sent successfully");
                                 debug!(identifier = %identifier, digest = %digest, status = %res.status(), "FCM notification response details");
                             }
                             Err(e) => {
