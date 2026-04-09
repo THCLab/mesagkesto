@@ -109,11 +109,11 @@ impl MessageBoxListener {
                     actix_web::web::get().to(http_handlers::list_broadcasts),
                 )
                 .route(
-                    "/broadcast/{aid}/{topic}",
-                    actix_web::web::get().to(http_handlers::discover_broadcast),
+                    "/broadcast/{said}",
+                    actix_web::web::get().to(http_handlers::get_broadcast),
                 )
                 .route(
-                    "/broadcast/{aid}/{topic}/messages",
+                    "/broadcast/{said}/messages",
                     actix_web::web::get().to(http_handlers::get_broadcast_messages),
                 )
                 // Formal Mail federation endpoints
@@ -1295,30 +1295,29 @@ pub(crate) mod http_handlers {
         Ok(HttpResponse::Ok().json(broadcasts))
     }
 
-    /// Discover a broadcast channel by owner AID and topic name (no auth).
+    /// Get a broadcast channel by SAID (no auth).
     #[utoipa::path(
         get,
-        path = "/broadcast/{aid}/{topic}",
+        path = "/broadcast/{said}",
         tag = "Channels",
         params(
-            ("aid" = String, Path, description = "Owner AID"),
-            ("topic" = String, Path, description = "Topic name")
+            ("said" = String, Path, description = "Channel SAID"),
         ),
         responses(
             (status = 200, description = "Broadcast channel metadata", body = crate::channel::Channel),
             (status = 404, description = "Broadcast not found")
         )
     )]
-    pub async fn discover_broadcast(
-        path: web::Path<(String, String)>,
+    pub async fn get_broadcast(
+        path: web::Path<String>,
         data: web::Data<Arc<MessageBox>>,
     ) -> Result<HttpResponse, ApiError> {
-        let (aid, topic) = path.into_inner();
-        debug!(aid = %aid, topic = %topic, "GET /broadcast/aid/topic");
+        let said = path.into_inner();
+        debug!(said = %said, "GET /broadcast/{said}");
 
         let channel = data
             .channel_handle
-            .get_by_topic(&aid, &topic)
+            .get(&said)
             .await
             .ok_or(ApiError::MessageboxError(
                 crate::MessageboxError::UnknownMessage("Broadcast not found".into()),
@@ -1332,14 +1331,13 @@ pub(crate) mod http_handlers {
         Ok(HttpResponse::Ok().json(channel))
     }
 
-    /// Get public broadcast messages (no auth required).
+    /// Get public broadcast messages by channel SAID (no auth required).
     #[utoipa::path(
         get,
-        path = "/broadcast/{aid}/{topic}/messages",
+        path = "/broadcast/{said}/messages",
         tag = "Channels",
         params(
-            ("aid" = String, Path, description = "Owner AID"),
-            ("topic" = String, Path, description = "Topic name"),
+            ("said" = String, Path, description = "Channel SAID"),
             ChannelMessagesQuery
         ),
         responses(
@@ -1348,17 +1346,17 @@ pub(crate) mod http_handlers {
         )
     )]
     pub async fn get_broadcast_messages(
-        path: web::Path<(String, String)>,
+        path: web::Path<String>,
         query: web::Query<ChannelMessagesQuery>,
         data: web::Data<Arc<MessageBox>>,
     ) -> Result<HttpResponse, ApiError> {
-        let (aid, topic) = path.into_inner();
+        let said = path.into_inner();
         let from_sn = query.s.unwrap_or(0);
-        debug!(aid = %aid, topic = %topic, from_sn = from_sn, "GET /broadcast/aid/topic/messages");
+        debug!(said = %said, from_sn = from_sn, "GET /broadcast/{said}/messages");
 
         let channel = data
             .channel_handle
-            .get_by_topic(&aid, &topic)
+            .get(&said)
             .await
             .ok_or(ApiError::MessageboxError(
                 crate::MessageboxError::UnknownMessage("Broadcast not found".into()),

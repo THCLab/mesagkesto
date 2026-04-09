@@ -49,7 +49,7 @@ use utoipa::{Modify, OpenApi};
         crate::messagebox_listener::http_handlers::get_channel,
         crate::messagebox_listener::http_handlers::get_channel_messages,
         crate::messagebox_listener::http_handlers::list_broadcasts,
-        crate::messagebox_listener::http_handlers::discover_broadcast,
+        crate::messagebox_listener::http_handlers::get_broadcast,
         crate::messagebox_listener::http_handlers::get_broadcast_messages,
         // MQTT
         crate::messagebox_listener::http_handlers::mqtt_authz,

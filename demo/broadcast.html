@@ -111,6 +111,70 @@
             transition: background 0.2s;
         }
         .btn-primary:hover { background: #d7dbdc; }
+        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .channel-list {
+            margin-top: 16px;
+        }
+        .channel-list-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px;
+            border: 1px solid #333639;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: background 0.2s, border-color 0.2s;
+        }
+        .channel-list-item:hover { background: rgba(231, 233, 234, 0.03); }
+        .channel-list-item.selected {
+            border-color: #1d9bf0;
+            background: rgba(29, 155, 240, 0.08);
+        }
+        .channel-list-item .ch-avatar {
+            width: 40px; height: 40px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #1d9bf0, #1a8cd8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            font-weight: 700;
+            color: #fff;
+            flex-shrink: 0;
+        }
+        .channel-list-item .ch-info { flex: 1; min-width: 0; }
+        .channel-list-item .ch-name {
+            font-size: 15px;
+            font-weight: 700;
+            color: #e7e9ea;
+        }
+        .channel-list-item .ch-desc {
+            font-size: 13px;
+            color: #71767b;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .channel-list-item .ch-said {
+            font-size: 11px;
+            color: #333639;
+            font-family: monospace;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .channel-list-empty {
+            text-align: center;
+            padding: 24px;
+            color: #71767b;
+            font-size: 14px;
+        }
+        .channel-list-loading {
+            text-align: center;
+            padding: 24px;
+        }
 
         /* Channel header / profile area */
         .channel-profile {
@@ -430,18 +494,18 @@
                 <input type="text" id="serverUrl" placeholder="http://localhost:3236" />
             </div>
             <div class="form-group">
-                <label>Channel Owner AID</label>
-                <input type="text" id="ownerAid" placeholder="EBilc4-L3tFUnfM_wJr4S4OJanAv_VmF_dJNN6vkf2Ha" />
-            </div>
-            <div class="form-group">
-                <label>Topic</label>
-                <input type="text" id="topicName" placeholder="announcements" />
-            </div>
-            <div class="form-group">
                 <label>MQTT WebSocket URL (optional)</label>
                 <input type="text" id="mqttUrl" placeholder="ws://localhost:8083/mqtt" />
             </div>
-            <button class="btn-primary" onclick="connect()">Subscribe</button>
+            <button class="btn-primary" id="fetchChannelsBtn" onclick="fetchChannels()">Fetch channels</button>
+
+            <div id="channelPicker" style="display: none;">
+                <div class="form-group" style="margin-top: 24px;">
+                    <label>Select a broadcast channel</label>
+                </div>
+                <div id="channelListContainer" class="channel-list"></div>
+                <button class="btn-primary" id="subscribeBtn" onclick="connect()" disabled>Subscribe</button>
+            </div>
         </div>
 
         <!-- Channel view -->
@@ -499,11 +563,10 @@
     <script>
         let state = {
             serverUrl: '',
-            ownerAid: '',
-            topic: '',
             mqttUrl: '',
             channelSaid: null,
             channel: null,
+            broadcasts: [],
             messages: [],
             lastSn: -1,
             mqttClient: null,
@@ -566,32 +629,98 @@
         function loadFromUrl() {
             const params = new URLSearchParams(window.location.search);
             if (params.get('url')) document.getElementById('serverUrl').value = params.get('url');
-            if (params.get('aid')) document.getElementById('ownerAid').value = params.get('aid');
-            if (params.get('topic')) document.getElementById('topicName').value = params.get('topic');
             if (params.get('mqtt')) document.getElementById('mqttUrl').value = params.get('mqtt');
-            if (params.get('url') && params.get('aid') && params.get('topic')) {
-                connect();
+            if (params.get('url') && params.get('said')) {
+                // Direct connect with SAID from URL
+                state.serverUrl = params.get('url').replace(/\/$/, '');
+                state.mqttUrl = params.get('mqtt') || '';
+                state.channelSaid = params.get('said');
+                connectToChannel(state.channelSaid);
+            } else if (params.get('url')) {
+                fetchChannels();
             }
+        }
+
+        // ---- Fetch available channels ----
+        async function fetchChannels() {
+            state.serverUrl = document.getElementById('serverUrl').value.replace(/\/$/, '');
+            state.mqttUrl = document.getElementById('mqttUrl').value.trim();
+
+            if (!state.serverUrl) {
+                alert('Please fill in the Server URL');
+                return;
+            }
+
+            const btn = document.getElementById('fetchChannelsBtn');
+            btn.textContent = 'Loading...';
+            btn.disabled = true;
+
+            try {
+                const resp = await fetch(`${state.serverUrl}/broadcasts`);
+                if (!resp.ok) throw new Error(`Failed to fetch broadcasts (${resp.status})`);
+                state.broadcasts = await resp.json();
+                renderChannelList();
+                document.getElementById('channelPicker').style.display = 'block';
+            } catch (e) {
+                alert(`Error: ${e.message}`);
+            } finally {
+                btn.textContent = 'Fetch channels';
+                btn.disabled = false;
+            }
+        }
+
+        function renderChannelList() {
+            const container = document.getElementById('channelListContainer');
+            if (state.broadcasts.length === 0) {
+                container.innerHTML = '<div class="channel-list-empty">No broadcast channels found on this server.</div>';
+                return;
+            }
+
+            container.innerHTML = state.broadcasts.map(ch => {
+                const name = ch.topic || 'Untitled';
+                const initial = name.charAt(0).toUpperCase();
+                const desc = ch.description || '';
+                const avatarHtml = ch.avatar
+                    ? `<img src="${state.serverUrl}/vault/${ch.avatar}" style="width:40px;height:40px;border-radius:50%;object-fit:cover" onerror="this.style.display='none';this.parentElement.textContent='${initial}'" />`
+                    : initial;
+                return `
+                    <div class="channel-list-item" data-said="${ch.said}" onclick="selectChannel('${ch.said}')">
+                        <div class="ch-avatar">${avatarHtml}</div>
+                        <div class="ch-info">
+                            <div class="ch-name">${escapeHtml(name)}</div>
+                            ${desc ? `<div class="ch-desc">${escapeHtml(desc)}</div>` : ''}
+                            <div class="ch-said">${ch.said}</div>
+                        </div>
+                    </div>`;
+            }).join('');
+        }
+
+        function selectChannel(said) {
+            state.channelSaid = said;
+            document.querySelectorAll('.channel-list-item').forEach(el => {
+                el.classList.toggle('selected', el.dataset.said === said);
+            });
+            document.getElementById('subscribeBtn').disabled = false;
         }
 
         // ---- Connect ----
         async function connect() {
-            state.serverUrl = document.getElementById('serverUrl').value.replace(/\/$/, '');
-            state.ownerAid = document.getElementById('ownerAid').value.trim();
-            state.topic = document.getElementById('topicName').value.trim();
-            state.mqttUrl = document.getElementById('mqttUrl').value.trim();
-
-            if (!state.serverUrl || !state.ownerAid || !state.topic) {
-                alert('Please fill in Server URL, Owner AID, and Topic Name');
+            if (!state.channelSaid) {
+                alert('Please select a channel first');
                 return;
             }
+            state.serverUrl = document.getElementById('serverUrl').value.replace(/\/$/, '');
+            state.mqttUrl = document.getElementById('mqttUrl').value.trim();
+            await connectToChannel(state.channelSaid);
+        }
 
+        async function connectToChannel(said) {
             document.getElementById('setup').style.display = 'none';
             document.getElementById('channelView').style.display = 'block';
             setStatus('polling', 'Fetching channel...');
 
             try {
-                const resp = await fetch(`${state.serverUrl}/broadcast/${encodeURIComponent(state.ownerAid)}/${encodeURIComponent(state.topic)}`);
+                const resp = await fetch(`${state.serverUrl}/broadcast/${encodeURIComponent(said)}`);
                 if (!resp.ok) throw new Error(`Channel not found (${resp.status})`);
                 state.channel = await resp.json();
                 state.channelSaid = state.channel.said;
@@ -599,9 +728,9 @@
                 // Update profile
                 const topicName = state.channel.topic || 'Untitled Channel';
                 document.getElementById('channelTitle').textContent = topicName;
-                document.getElementById('channelSubtitle').textContent = `@${state.topic}`;
+                document.getElementById('channelSubtitle').textContent = state.channel.said;
                 document.getElementById('profileName').textContent = topicName;
-                document.getElementById('profileHandle').textContent = `@${state.topic}`;
+                document.getElementById('profileHandle').textContent = state.channel.said;
                 document.getElementById('profileBio').textContent = state.channel.description || '';
                 document.getElementById('channelOwner').textContent = state.channel.creator;
                 document.getElementById('channelSaid').textContent = state.channel.said;
@@ -647,7 +776,7 @@
         async function fetchMessages() {
             try {
                 const fromSn = state.lastSn + 1;
-                const resp = await fetch(`${state.serverUrl}/broadcast/${encodeURIComponent(state.ownerAid)}/${encodeURIComponent(state.topic)}/messages?s=${fromSn}`);
+                const resp = await fetch(`${state.serverUrl}/broadcast/${encodeURIComponent(state.channelSaid)}/messages?s=${fromSn}`);
                 if (!resp.ok) return;
                 const data = await resp.json();
 
