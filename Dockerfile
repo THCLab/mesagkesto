@@ -16,6 +16,8 @@ COPY messagebox/src ./messagebox/src
 # Cargo can now parse the manifest successfully because src/ exists
 RUN cargo fetch
 
+RUN apt-get update && apt-get install libssl-dev -y
+
 # 5. Copy the rest of the project (other crates, root files, etc.)
 COPY . /app/
 

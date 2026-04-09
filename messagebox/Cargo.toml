@@ -31,7 +31,7 @@ dauthz-server = { git = "https://github.com/THCLab/DauthZ.git", branch = "master
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-actix-web = "0.7"
-jsonwebtoken = "10"
+jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 sha2 = "0.11"
 utoipa = { version = "5", features = ["actix_extras"] }
 
