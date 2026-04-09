@@ -74,17 +74,21 @@ impl VerifyData {
         );
 
         debug!("Resolving watcher OOBI");
-        id.resolve_oobi(&oobi)
-            .await
-            .map_err(ControllerError::from)?;
-        debug!("Adding watcher to identifier");
-        let end_role = id
-            .add_watcher(watcher_oobi.eid)
-            .map_err(ControllerError::from)?;
-        let signature = signer.sign(end_role.clone()).await?;
-        id.finalize_add_watcher(end_role.as_bytes(), signature)
-            .await
-            .map_err(ControllerError::from)?;
+        match id.resolve_oobi(&oobi).await.map_err(ControllerError::from) {
+            Ok(()) => {
+                debug!("Adding watcher to identifier");
+                let end_role = id
+                    .add_watcher(watcher_oobi.eid)
+                    .map_err(ControllerError::from)?;
+                let signature = signer.sign(end_role.clone()).await?;
+                id.finalize_add_watcher(end_role.as_bytes(), signature)
+                    .await
+                    .map_err(ControllerError::from)?;
+            }
+            Err(e) => {
+                warn!(error = %e, "Failed to resolve watcher OOBI during startup, will retry later");
+            }
+        }
         let (task_sender, task_receiver) = mpsc::channel(20);
         info!("Verify data initialized successfully");
         Ok(VerifyData {
