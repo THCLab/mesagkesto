@@ -241,25 +241,18 @@ impl MessageBox {
     pub fn split_cesr_stream(
         input: &[u8],
     ) -> Result<(Vec<u8>, impl Iterator<Item = Signature>), MessageboxError> {
-        let (_rest, parsed_data) =
-            keri_sdk::cesrox::parse(input).map_err(|e| MessageboxError::Unparsable(e.to_string()))?;
-        let data = match parsed_data.payload {
+        let msg = keri_sdk::keri_core::event_message::cesr_adapter::parse_cesr_stream(input)
+            .map_err(|e| MessageboxError::Unparsable(e.to_string()))?;
+        let data = match msg.payload {
             keri_sdk::cesrox::payload::Payload::JSON(json) => json,
             keri_sdk::cesrox::payload::Payload::CBOR(_) => todo!(),
             keri_sdk::cesrox::payload::Payload::MGPK(_) => todo!(),
         };
-        let signatures = parsed_data
+        let signatures = msg
             .attachments
             .into_iter()
             .map(|g| get_signatures(g))
-            // This ignore errors while getting signatures
-            .filter_map(|sig| {
-                if let Ok(signature) = sig {
-                    Some(signature)
-                } else {
-                    None
-                }
-            })
+            .filter_map(|sig| sig.ok())
             .flatten();
         Ok((data, signatures))
     }

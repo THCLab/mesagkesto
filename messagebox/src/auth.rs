@@ -4,7 +4,7 @@ use std::sync::Arc;
 use chrono::Utc;
 use dauthz_core::{CeremonyPurpose, Challenge, ChallengeResponse};
 use dauthz_server::DauthzService;
-use keri_sdk::{BasicPrefix, CesrPrimitive, SelfSigningPrefix, Signer};
+use keri_sdk::{BasicPrefix, SelfSigningPrefix, Signer};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, info, warn};
@@ -95,6 +95,8 @@ impl AuthActor {
 
     /// Build a CESR stream: JSON payload + NontransReceiptCouples(identifier, signature)
     fn sign_to_cesr(&self, payload_json: &[u8]) -> Result<Vec<u8>, MessageboxError> {
+        use keri_sdk::cesrox::group::Group;
+
         let sig = self
             .signer
             .sign(payload_json)
@@ -102,11 +104,13 @@ impl AuthActor {
 
         // Build the CESR attachment: NontransReceiptCouples group
         let cesr_sig = SelfSigningPrefix::Ed25519Sha512(sig);
-        let couple_str = format!("{}{}", self.identifier.to_str(), cesr_sig.to_str());
-        let group = format!("-CAB{}", couple_str);
+        let group = Group::NontransReceiptCouples(vec![(
+            self.identifier.clone().into(),
+            cesr_sig.into(),
+        )]);
 
         let mut stream = payload_json.to_vec();
-        stream.extend_from_slice(group.as_bytes());
+        stream.extend_from_slice(group.to_cesr_str().as_bytes());
         Ok(stream)
     }
 

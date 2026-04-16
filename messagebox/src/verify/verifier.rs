@@ -71,6 +71,7 @@ impl VerifyData {
             None,
             controller.known_events.clone(),
             controller.communication.clone(),
+            controller.cache.clone(),
         );
 
         debug!("Resolving watcher OOBI");

@@ -316,22 +316,16 @@ paths:
           description: Authentication not configured on this server
       security:
       - bearerAuth: []
-  /broadcast/{aid}/{topic}:
+  /broadcast/{said}:
     get:
       tags:
       - Channels
-      summary: Discover a broadcast channel by owner AID and topic name (no auth).
-      operationId: discover_broadcast
+      summary: Get a broadcast channel by SAID (no auth).
+      operationId: get_broadcast
       parameters:
-      - name: aid
+      - name: said
         in: path
-        description: Owner AID
-        required: true
-        schema:
-          type: string
-      - name: topic
-        in: path
-        description: Topic name
+        description: Channel SAID
         required: true
         schema:
           type: string
@@ -344,22 +338,16 @@ paths:
                 $ref: '#/components/schemas/Channel'
         '404':
           description: Broadcast not found
-  /broadcast/{aid}/{topic}/messages:
+  /broadcast/{said}/messages:
     get:
       tags:
       - Channels
-      summary: Get public broadcast messages (no auth required).
+      summary: Get public broadcast messages by channel SAID (no auth required).
       operationId: get_broadcast_messages
       parameters:
-      - name: aid
+      - name: said
         in: path
-        description: Owner AID
-        required: true
-        schema:
-          type: string
-      - name: topic
-        in: path
-        description: Topic name
+        description: Channel SAID
         required: true
         schema:
           type: string
