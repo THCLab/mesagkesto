@@ -1,25 +1,34 @@
 use std::{path::Path, sync::Arc};
 
-use keri_sdk::{
-    BasicPrefix, IdentifierPrefix, LocationScheme, SelfAddressingIdentifier, SelfSigningPrefix,
-    Signature, Signer,
-};
 use keri_sdk::keri_core::{
     actor::prelude::{HashFunctionCode, SerializationFormats},
     error::Error,
     event_message::signature::get_signatures,
     query::reply_event::{ReplyEvent, ReplyRoute, SignedReply},
 };
+use keri_sdk::{
+    BasicPrefix, IdentifierPrefix, LocationScheme, SelfAddressingIdentifier, SelfSigningPrefix,
+    Signature, Signer,
+};
 
 use actix::{Actor, Addr};
 use tracing::{debug, info};
 
 use crate::{
-    acl::AclHandle, auth::AuthHandle, channel::ChannelHandle, connection::ConnectionManager,
-    db::Db, mailbox::MailboxHandle, notifier::NotifyHandle, oobis::OobiHandle,
+    acl::AclHandle,
+    auth::AuthHandle,
+    channel::ChannelHandle,
+    connection::ConnectionManager,
+    db::Db,
+    mailbox::MailboxHandle,
+    notifier::NotifyHandle,
+    oobis::OobiHandle,
     registration::{RegistrationHandle, RegistrationMode},
-    responses_store::ResponsesHandle, storage::StorageHandle, validate::ValidateHandle,
-    verify::VerifyHandle, MessageboxError,
+    responses_store::ResponsesHandle,
+    storage::StorageHandle,
+    validate::ValidateHandle,
+    verify::VerifyHandle,
+    MessageboxError,
 };
 
 #[derive(Clone)]
@@ -43,6 +52,7 @@ pub struct MessageBox {
 }
 
 impl MessageBox {
+    #[allow(clippy::too_many_arguments)]
     pub async fn setup(
         db: Db,
         kel_path: &Path,
@@ -251,7 +261,7 @@ impl MessageBox {
         let signatures = msg
             .attachments
             .into_iter()
-            .map(|g| get_signatures(g))
+            .map(get_signatures)
             .filter_map(|sig| sig.ok())
             .flatten();
         Ok((data, signatures))

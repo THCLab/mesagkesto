@@ -306,8 +306,12 @@ impl ChannelActor {
                 role,
                 sender,
             } => {
-                let _ =
-                    sender.send(self.handle_set_role(&channel_said, &setter_aid, &target_aid, role));
+                let _ = sender.send(self.handle_set_role(
+                    &channel_said,
+                    &setter_aid,
+                    &target_aid,
+                    role,
+                ));
             }
             ChannelMsg::Update {
                 channel_said,
@@ -360,6 +364,7 @@ impl ChannelActor {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn handle_create(
         &self,
         creator_aid: String,
@@ -371,13 +376,8 @@ impl ChannelActor {
         initial_members: Vec<String>,
     ) -> Result<Channel, MessageboxError> {
         let now = Utc::now().to_rfc3339();
-        let said = compute_channel_said(
-            &channel_type,
-            &creator_aid,
-            &initial_members,
-            &topic,
-            &now,
-        );
+        let said =
+            compute_channel_said(&channel_type, &creator_aid, &initial_members, &topic, &now);
 
         debug!(said = %said, creator = %creator_aid, channel_type = ?channel_type, "Creating channel");
 
@@ -532,11 +532,7 @@ impl ChannelActor {
         Ok(())
     }
 
-    fn handle_accept(
-        &self,
-        channel_said: &str,
-        accepter_aid: &str,
-    ) -> Result<(), MessageboxError> {
+    fn handle_accept(&self, channel_said: &str, accepter_aid: &str) -> Result<(), MessageboxError> {
         let mut channel = self
             .load_channel(channel_said)
             .ok_or(MessageboxError::UnknownMessage("Channel not found".into()))?;
@@ -560,11 +556,7 @@ impl ChannelActor {
         Ok(())
     }
 
-    fn handle_reject(
-        &self,
-        channel_said: &str,
-        rejecter_aid: &str,
-    ) -> Result<(), MessageboxError> {
+    fn handle_reject(&self, channel_said: &str, rejecter_aid: &str) -> Result<(), MessageboxError> {
         let mut channel = self
             .load_channel(channel_said)
             .ok_or(MessageboxError::UnknownMessage("Channel not found".into()))?;
@@ -581,11 +573,7 @@ impl ChannelActor {
         Ok(())
     }
 
-    fn handle_leave(
-        &self,
-        channel_said: &str,
-        leaver_aid: &str,
-    ) -> Result<(), MessageboxError> {
+    fn handle_leave(&self, channel_said: &str, leaver_aid: &str) -> Result<(), MessageboxError> {
         let mut channel = self
             .load_channel(channel_said)
             .ok_or(MessageboxError::UnknownMessage("Channel not found".into()))?;
@@ -705,11 +693,7 @@ impl ChannelActor {
         self.save_channel(&channel)
     }
 
-    fn handle_delete(
-        &self,
-        channel_said: &str,
-        deleter_aid: &str,
-    ) -> Result<(), MessageboxError> {
+    fn handle_delete(&self, channel_said: &str, deleter_aid: &str) -> Result<(), MessageboxError> {
         let channel = self
             .load_channel(channel_said)
             .ok_or(MessageboxError::UnknownMessage("Channel not found".into()))?;
@@ -757,6 +741,7 @@ impl ChannelHandle {
         Self { sender }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn create(
         &self,
         creator_aid: String,

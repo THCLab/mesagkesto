@@ -1,7 +1,7 @@
 use std::{net::Ipv4Addr, path::PathBuf};
 
 use anyhow::{Context, Result};
-use clap::{arg, Parser};
+use clap::Parser;
 use figment::{
     providers::{Format, Serialized, Yaml},
     Figment,

@@ -2,10 +2,10 @@
 pub mod test {
     use std::{path::Path, sync::Arc, time::Duration};
 
-    use keri_sdk::{BasicPrefix, KeyManager, LocationScheme, SelfSigningPrefix};
     use keri_sdk::keri_controller::{
         config::ControllerConfig, CryptoBox, RedbController, RedbIdentifier,
     };
+    use keri_sdk::{BasicPrefix, KeyManager, LocationScheme, SelfSigningPrefix};
     use messagebox::{
         db::Db, forward_message, messagebox::MessageBox, query_by_sn, MessageboxError,
     };
@@ -47,7 +47,7 @@ pub mod test {
 
         // Quering mailbox to get receipts
         let query = signing_identifier
-            .query_mailbox(signing_identifier.id(), &[witness_id.clone()])
+            .query_mailbox(signing_identifier.id(), std::slice::from_ref(&witness_id))
             .unwrap();
 
         // Query with wrong signature
@@ -78,7 +78,9 @@ pub mod test {
 
         // Publishing rotation after messagebox resolve oobi, to let him retrieve it from watcher.
         // Quering mailbox to get receipts
-        let query = id.query_mailbox(id.id(), &[witness_id.clone()]).unwrap();
+        let query = id
+            .query_mailbox(id.id(), std::slice::from_ref(&witness_id))
+            .unwrap();
 
         // Query with wrong signature
         {

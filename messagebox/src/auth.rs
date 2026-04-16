@@ -53,7 +53,9 @@ pub enum AuthResult {
         account_id: String,
         invite_token: Option<String>,
     },
-    Authenticated { session: Session },
+    Authenticated {
+        session: Session,
+    },
     Invalid(String),
 }
 
@@ -104,10 +106,8 @@ impl AuthActor {
 
         // Build the CESR attachment: NontransReceiptCouples group
         let cesr_sig = SelfSigningPrefix::Ed25519Sha512(sig);
-        let group = Group::NontransReceiptCouples(vec![(
-            self.identifier.clone().into(),
-            cesr_sig.into(),
-        )]);
+        let group =
+            Group::NontransReceiptCouples(vec![(self.identifier.clone().into(), cesr_sig.into())]);
 
         let mut stream = payload_json.to_vec();
         stream.extend_from_slice(group.to_cesr_str().as_bytes());

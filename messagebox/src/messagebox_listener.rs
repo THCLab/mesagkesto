@@ -3,8 +3,8 @@ use actix_web::{
     dev::Server, http::StatusCode, web::Data, App, HttpResponse, HttpServer, ResponseError,
 };
 use anyhow::Result;
-use keri_sdk::{IdentifierPrefix, SelfAddressingIdentifier};
 use keri_sdk::keri_core::{event_message::cesr_adapter::ParseError, oobi::Role};
+use keri_sdk::{IdentifierPrefix, SelfAddressingIdentifier};
 use std::{net::ToSocketAddrs, sync::Arc};
 use tracing_actix_web::TracingLogger;
 
@@ -178,13 +178,13 @@ pub(crate) mod http_handlers {
 
     use crate::{messagebox::MessageBox, MessageboxError};
     use actix_web::{http::header::ContentType, web, HttpResponse};
-    use keri_sdk::{IdentifierPrefix, Oobi, SelfAddressingIdentifier};
     use keri_sdk::keri_core::{
         actor::parse_reply_stream,
         event_message::signed_event_message::{Message, Op},
         oobi::Role,
         query::reply_event::SignedReply,
     };
+    use keri_sdk::{IdentifierPrefix, Oobi, SelfAddressingIdentifier};
     use tracing::{debug, warn};
 
     use crate::auth::AuthResult;
@@ -379,7 +379,7 @@ pub(crate) mod http_handlers {
             &mut end_role
                 .ok_or(ApiError::MissingEndRoleOobi(cid.clone(), role.clone()))?
                 .into_iter()
-                .chain(loc_scheme?.unwrap_or_default().into_iter()),
+                .chain(loc_scheme?.unwrap_or_default()),
         )?;
 
         debug!(%cid, ?role, %eid, body_len = oobis.len(), "GET /oobi/cid/role/eid -> 200");
@@ -744,12 +744,9 @@ pub(crate) mod http_handlers {
                 let _ = data.mailbox_handle.activate(session.aid.clone()).await;
 
                 // Build MQTT JWT if jwt_secret is configured
-                let mqtt_token = data
-                    .jwt_secret
-                    .as_ref()
-                    .and_then(|secret| {
-                        build_mqtt_jwt(&session.aid, secret, &session.expires_at).ok()
-                    });
+                let mqtt_token = data.jwt_secret.as_ref().and_then(|secret| {
+                    build_mqtt_jwt(&session.aid, secret, &session.expires_at).ok()
+                });
 
                 let mut response = serde_json::json!({
                     "token": session.token,
@@ -1110,10 +1107,7 @@ pub(crate) mod http_handlers {
             .validate_session(token)
             .await
             .ok_or(ApiError::Unauthorized)?;
-        let raw_invites = data
-            .channel_handle
-            .get_pending_invites(&session.aid)
-            .await;
+        let raw_invites = data.channel_handle.get_pending_invites(&session.aid).await;
 
         // Enrich invite tuples with channel metadata
         let mut result = Vec::new();
@@ -1267,7 +1261,9 @@ pub(crate) mod http_handlers {
             Some(messages) => Ok(HttpResponse::Ok()
                 .content_type(actix_web::http::header::ContentType::json())
                 .body(messages)),
-            None => Ok(HttpResponse::Ok().json(serde_json::json!({"last_sn": null, "messages": []}))),
+            None => {
+                Ok(HttpResponse::Ok().json(serde_json::json!({"last_sn": null, "messages": []})))
+            }
         }
     }
 
@@ -1287,9 +1283,7 @@ pub(crate) mod http_handlers {
         let all = data.channel_handle.list_all().await;
         let broadcasts: Vec<_> = all
             .into_iter()
-            .filter(|ch| {
-                ch.channel_type == crate::channel::ChannelType::Broadcast
-            })
+            .filter(|ch| ch.channel_type == crate::channel::ChannelType::Broadcast)
             .collect();
         debug!(count = broadcasts.len(), "GET /broadcasts -> 200");
         Ok(HttpResponse::Ok().json(broadcasts))
@@ -1374,7 +1368,9 @@ pub(crate) mod http_handlers {
             Some(messages) => Ok(HttpResponse::Ok()
                 .content_type(actix_web::http::header::ContentType::json())
                 .body(messages)),
-            None => Ok(HttpResponse::Ok().json(serde_json::json!({"last_sn": null, "messages": []}))),
+            None => {
+                Ok(HttpResponse::Ok().json(serde_json::json!({"last_sn": null, "messages": []})))
+            }
         }
     }
 
@@ -1519,8 +1515,8 @@ pub(crate) mod http_handlers {
             if let Some(recipient_aid) = recipient_val.as_str() {
                 // Check if this recipient has a mailbox on this instance
                 if data.mailbox_handle.exists(recipient_aid).await {
-                    let envelope_str = serde_json::to_string(&envelope)
-                        .map_err(|_| ApiError::Unparsable)?;
+                    let envelope_str =
+                        serde_json::to_string(&envelope).map_err(|_| ApiError::Unparsable)?;
                     data.storage_handle
                         .save_mail_message(recipient_aid, &envelope_str)
                         .await
@@ -1587,8 +1583,7 @@ pub(crate) mod http_handlers {
         // Store the receipt — the original sender can retrieve it
         // We need to know who the original sender was. The message_id should be enough
         // for the sender's client to poll for receipts.
-        let receipt_str =
-            serde_json::to_string(&receipt).map_err(|_| ApiError::Unparsable)?;
+        let receipt_str = serde_json::to_string(&receipt).map_err(|_| ApiError::Unparsable)?;
         data.storage_handle
             .save_mail_receipt(signer_aid, message_id, &receipt_str)
             .await
@@ -1763,7 +1758,10 @@ pub(crate) mod http_handlers {
         // Verify the SAID matches the content hash
         use sha2::{Digest, Sha256};
         let digest = Sha256::digest(&body);
-        let hash = digest.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+        let hash = digest
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>();
         if hash != said {
             return Ok(HttpResponse::BadRequest().json(serde_json::json!({
                 "error": "SAID does not match content hash",
@@ -1809,16 +1807,12 @@ pub(crate) mod http_handlers {
         let said = path.into_inner();
         debug!("GET /vault/{}", said);
 
-        let blob = data
-            .storage_handle
-            .vault_get(&said)
-            .await
-            .map_err(|e| {
-                ApiError::MessageboxError(MessageboxError::DbError(format!(
-                    "Failed to get vault blob: {}",
-                    e
-                )))
-            })?;
+        let blob = data.storage_handle.vault_get(&said).await.map_err(|e| {
+            ApiError::MessageboxError(MessageboxError::DbError(format!(
+                "Failed to get vault blob: {}",
+                e
+            )))
+        })?;
 
         match blob {
             Some(data) => {

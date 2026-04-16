@@ -171,7 +171,10 @@ impl StorageActor {
             } => {
                 let msg_str = message.to_string();
                 debug!(channel = %channel_said, digest = %digest, msg_len = msg_str.len(), "Saving channel message");
-                match self.db.save_channel_message(&channel_said, &digest, &msg_str) {
+                match self
+                    .db
+                    .save_channel_message(&channel_said, &digest, &msg_str)
+                {
                     Ok(seq) => {
                         info!(channel = %channel_said, digest = %digest, seq = seq, "Channel message saved");
                         let _ = sender.send(1);
@@ -211,7 +214,10 @@ impl StorageActor {
                 sender,
             } => {
                 debug!(channel = %channel_said, digest_count = digests.len(), "Getting channel messages by digest");
-                let result = match self.db.get_channel_messages_by_digest(&channel_said, &digests) {
+                let result = match self
+                    .db
+                    .get_channel_messages_by_digest(&channel_said, &digests)
+                {
                     Ok(Some(messages)) => {
                         let parsed: Vec<serde_json::Value> = messages
                             .iter()
@@ -374,11 +380,7 @@ impl StorageHandle {
         recv.await.expect("Actor task has been killed")
     }
 
-    pub async fn get_channel_by_index(
-        &self,
-        channel_said: &str,
-        index: usize,
-    ) -> Option<String> {
+    pub async fn get_channel_by_index(&self, channel_said: &str, index: usize) -> Option<String> {
         let (send, recv) = oneshot::channel();
         let msg = StorageMessage::GetChannelBySn {
             channel_said: channel_said.to_string(),

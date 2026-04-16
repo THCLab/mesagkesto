@@ -32,7 +32,8 @@ const ACL_TOKENS: TableDefinition<&str, &str> = TableDefinition::new("acl_tokens
 const CHANNELS: TableDefinition<&str, &str> = TableDefinition::new("channels");
 
 /// Table: (channel_said, seq_no) -> message_json_string
-const CHANNEL_MESSAGES: TableDefinition<(&str, u64), &str> = TableDefinition::new("channel_messages");
+const CHANNEL_MESSAGES: TableDefinition<(&str, u64), &str> =
+    TableDefinition::new("channel_messages");
 
 /// Table: (channel_said, digest) -> seq_no
 const CHANNEL_MESSAGE_INDEX: TableDefinition<(&str, &str), u64> =
@@ -385,10 +386,7 @@ impl Db {
         let write_txn = self.inner.begin_write()?;
         let seq = {
             let mut seq_table = write_txn.open_table(CHANNEL_SEQUENCES)?;
-            let current = seq_table
-                .get(channel_said)?
-                .map(|v| v.value())
-                .unwrap_or(0);
+            let current = seq_table.get(channel_said)?.map(|v| v.value()).unwrap_or(0);
             let next = current + 1;
             seq_table.insert(channel_said, next)?;
 
@@ -624,7 +622,11 @@ impl Db {
     // --- Formal Mail ---
 
     /// Store an incoming mail envelope for a recipient. Returns the sequence number.
-    pub fn save_mail_message(&self, recipient_aid: &str, envelope_json: &str) -> Result<u64, DbError> {
+    pub fn save_mail_message(
+        &self,
+        recipient_aid: &str,
+        envelope_json: &str,
+    ) -> Result<u64, DbError> {
         debug!(aid = %recipient_aid, "Saving mail message");
         let write_txn = self.inner.begin_write()?;
         let seq;
@@ -648,7 +650,11 @@ impl Db {
     }
 
     /// Retrieve pending mail messages for a recipient, starting from `from_seq`.
-    pub fn get_mail_messages(&self, recipient_aid: &str, from_seq: u64) -> Result<Vec<(u64, String)>, DbError> {
+    pub fn get_mail_messages(
+        &self,
+        recipient_aid: &str,
+        from_seq: u64,
+    ) -> Result<Vec<(u64, String)>, DbError> {
         let read_txn = self.inner.begin_read()?;
         let table = read_txn.open_table(MAIL_MESSAGES)?;
         let mut results = Vec::new();
@@ -656,7 +662,10 @@ impl Db {
         // Iterate from from_seq up to current max
         let max_seq = {
             let seq_table = read_txn.open_table(MAIL_SEQUENCES)?;
-            seq_table.get(recipient_aid)?.map(|v| v.value()).unwrap_or(0)
+            seq_table
+                .get(recipient_aid)?
+                .map(|v| v.value())
+                .unwrap_or(0)
         };
 
         for seq in from_seq..max_seq {
@@ -679,7 +688,12 @@ impl Db {
     }
 
     /// Store a mail receipt (delivery or read) for a sender to retrieve.
-    pub fn save_mail_receipt(&self, sender_aid: &str, message_id: &str, receipt_json: &str) -> Result<(), DbError> {
+    pub fn save_mail_receipt(
+        &self,
+        sender_aid: &str,
+        message_id: &str,
+        receipt_json: &str,
+    ) -> Result<(), DbError> {
         debug!(sender = %sender_aid, msg_id = %message_id, "Saving mail receipt");
         let write_txn = self.inner.begin_write()?;
         {
@@ -691,10 +705,16 @@ impl Db {
     }
 
     /// Get a mail receipt for a specific message.
-    pub fn get_mail_receipt(&self, sender_aid: &str, message_id: &str) -> Result<Option<String>, DbError> {
+    pub fn get_mail_receipt(
+        &self,
+        sender_aid: &str,
+        message_id: &str,
+    ) -> Result<Option<String>, DbError> {
         let read_txn = self.inner.begin_read()?;
         let table = read_txn.open_table(MAIL_RECEIPTS)?;
-        Ok(table.get((sender_aid, message_id))?.map(|v| v.value().to_string()))
+        Ok(table
+            .get((sender_aid, message_id))?
+            .map(|v| v.value().to_string()))
     }
 
     // --- Storage Vault ---

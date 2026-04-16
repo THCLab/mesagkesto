@@ -14,7 +14,6 @@ pub enum PresenceState {
 }
 
 /// Messages sent to the ConnectionManager actor
-
 /// Register a new WebSocket session
 #[derive(Message)]
 #[rtype(result = "()")]
@@ -77,6 +76,12 @@ pub struct ConnectionManager {
     presence_hidden: HashMap<String, Vec<String>>,
 }
 
+impl Default for ConnectionManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ConnectionManager {
     pub fn new() -> Self {
         debug!("Connection manager initialized");
@@ -112,7 +117,7 @@ impl ConnectionManager {
                 }
             }
             for addr in sessions {
-                let _ = addr.do_send(WsMessage(msg.clone()));
+                addr.do_send(WsMessage(msg.clone()));
                 notified_count += 1;
             }
         }
@@ -182,7 +187,7 @@ impl Handler<RelayMessage> for ConnectionManager {
                 return false;
             }
             for addr in sessions {
-                let _ = addr.do_send(WsMessage(msg.text.clone()));
+                addr.do_send(WsMessage(msg.text.clone()));
             }
             info!(to_aid = %msg.to_aid, session_count = sessions.len(), "Message relayed to AID");
             true
@@ -218,7 +223,7 @@ impl Handler<RelayEphemeral> for ConnectionManager {
         debug!(to_aid = %msg.to_aid, data_len = msg.text.len(), "Relaying ephemeral data to AID");
         if let Some(sessions) = self.sessions.get(&msg.to_aid) {
             for addr in sessions {
-                let _ = addr.do_send(WsMessage(msg.text.clone()));
+                addr.do_send(WsMessage(msg.text.clone()));
             }
             debug!(to_aid = %msg.to_aid, session_count = sessions.len(), "Ephemeral data relayed");
         } else {

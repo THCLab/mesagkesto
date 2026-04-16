@@ -94,7 +94,10 @@ async fn test_validation() -> Result<(), Error> {
     let query_by_digest = serde_json::to_string(&qry).unwrap();
     dbg!(query_by_digest);
 
-    let res = messagebox.validator_handle.validate(qry.to_string(), None).await;
+    let res = messagebox
+        .validator_handle
+        .validate(qry.to_string(), None)
+        .await;
     assert_eq!(res?, Some("[\"saved0\",\"saved1\"]".to_string()));
 
     Ok(())

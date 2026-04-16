@@ -1,8 +1,8 @@
+use keri_sdk::keri_controller::{config::ControllerConfig, CryptoBox, RedbController};
+use keri_sdk::keri_core::{actor::event_generator, error::Error, oobi::Role};
 use keri_sdk::{
     BasicPrefix, IdentifierPrefix, KeyManager, LocationScheme, Oobi, SelfSigningPrefix,
 };
-use keri_sdk::keri_controller::{config::ControllerConfig, CryptoBox, RedbController};
-use keri_sdk::keri_core::{actor::event_generator, error::Error, oobi::Role};
 use std::sync::Arc;
 use tempfile::Builder;
 
@@ -43,7 +43,7 @@ async fn test_messagebox_location() -> Result<(), Error> {
         .unwrap();
     let message_box_oobi: LocationScheme = serde_json::from_str(&format!(
         r#"{{"eid":"{}","scheme":"http","url":"http://messagebox.sandbox.argo.colossi.network"}}"#,
-        message_box_id.to_string()
+        message_box_id
     ))
     .unwrap();
 

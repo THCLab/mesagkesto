@@ -140,8 +140,8 @@ impl VerifyHandle {
 pub mod test {
     use std::{sync::Arc, time::Duration};
 
-    use keri_sdk::{BasicPrefix, KeyManager, LocationScheme, SelfSigningPrefix};
     use keri_sdk::keri_controller::{config::ControllerConfig, RedbController};
+    use keri_sdk::{BasicPrefix, KeyManager, LocationScheme, SelfSigningPrefix};
     use serde_json::json;
     use tempfile::Builder;
     use tokio::time::sleep;
@@ -194,7 +194,7 @@ pub mod test {
 
         // Quering mailbox to get receipts
         let query = signing_identifier
-            .query_mailbox(signing_identifier.id(), &[witness_id.clone()])
+            .query_mailbox(signing_identifier.id(), std::slice::from_ref(&witness_id))
             .unwrap();
 
         // Query with wrong signature
@@ -236,18 +236,18 @@ pub mod test {
         let vh = VerifyHandle::new(root.path(), watcher_oobi, validator_handle).await?;
 
         assert!(matches!(
-            vh.verify(&msg, vec![signature.clone()]).await,
+            vh.verify(msg, vec![signature.clone()]).await,
             Err(MessageboxError::MissingOobi)
         ));
         vh.resolve_oobi(witness_oobi_st.to_string()).await.unwrap();
 
         assert!(matches!(
-            vh.verify(&msg, vec![signature.clone()]).await,
+            vh.verify(msg, vec![signature.clone()]).await,
             Err(MessageboxError::MissingOobi)
         ));
         vh.resolve_oobi(oobi_str.clone()).await.unwrap();
 
-        let r = vh.verify(&msg, vec![signature]).await;
+        let r = vh.verify(msg, vec![signature]).await;
         assert!(r.is_ok());
 
         // Rotate identifier and try to verify again
@@ -269,7 +269,7 @@ pub mod test {
 
         // Querying mailbox to get receipts
         let query = signing_identifier
-            .query_mailbox(signing_identifier.id(), &[witness_id.clone()])
+            .query_mailbox(signing_identifier.id(), std::slice::from_ref(&witness_id))
             .unwrap();
 
         // Query with wrong signature

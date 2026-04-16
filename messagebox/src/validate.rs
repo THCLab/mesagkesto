@@ -29,9 +29,9 @@ pub enum QueryArguments {
     BySn { i: String, s: usize },
 }
 
-impl ToString for MessageType {
-    fn to_string(&self) -> String {
-        serde_json::to_string(&self).unwrap()
+impl std::fmt::Display for MessageType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", serde_json::to_string(&self).unwrap())
     }
 }
 
@@ -194,219 +194,223 @@ impl ValidateActor {
                         Ok(self.storage.get_by_index(&i, s).await)
                     }
                 },
-                MessageType::Exn(exn) => match exn {
-                    ExchangeArguments::Fwd { i, a } => {
-                        // ACL enforcement: check if the sender is authorized to
-                        // write to recipient `i`'s mailbox.
-                        let acl_tokens = self.acl.get_tokens(&i).await;
-                        if !acl_tokens.is_empty() {
-                            let authorized = match sender_aid {
-                                Some(aid) => acl_tokens.iter().any(|t| t == aid),
-                                None => false,
-                            };
-                            if !authorized {
-                                let sender_str = sender_aid.unwrap_or("unknown").to_string();
-                                warn!(
-                                    sender = %sender_str,
-                                    recipient = %i,
-                                    "ACL denied: sender not in recipient's whitelist"
-                                );
+                MessageType::Exn(exn) => {
+                    match exn {
+                        ExchangeArguments::Fwd { i, a } => {
+                            // ACL enforcement: check if the sender is authorized to
+                            // write to recipient `i`'s mailbox.
+                            let acl_tokens = self.acl.get_tokens(&i).await;
+                            if !acl_tokens.is_empty() {
+                                let authorized = match sender_aid {
+                                    Some(aid) => acl_tokens.iter().any(|t| t == aid),
+                                    None => false,
+                                };
+                                if !authorized {
+                                    let sender_str = sender_aid.unwrap_or("unknown").to_string();
+                                    warn!(
+                                        sender = %sender_str,
+                                        recipient = %i,
+                                        "ACL denied: sender not in recipient's whitelist"
+                                    );
+                                    return Err(MessageboxError::AclDenied(sender_str));
+                                }
+                            }
+
+                            info!(recipient = %i, sender = ?sender_aid, msg_len = a.len(), "Forwarding message");
+                            let digest_algo: HashFunction = (HashFunctionCode::Blake3_256).into();
+                            let sai = digest_algo.derive(a.as_bytes()).to_string();
+                            self.storage.save(i.clone(), a, sai).await.to_string();
+                            Ok(None)
+                        }
+                        ExchangeArguments::SetFirebase { i, f: t } => {
+                            info!(identifier = %i, "Registering Firebase token");
+                            self.notify.save_token(i, t).await;
+                            Ok(None)
+                        }
+                        ExchangeArguments::ChannelCreate {
+                            channel_type,
+                            topic,
+                            description,
+                            avatar,
+                            background,
+                            members,
+                        } => {
+                            let sender_str = sender_aid
+                                .ok_or(MessageboxError::VerificationFailure)?
+                                .to_string();
+                            let ct = parse_channel_type(&channel_type)?;
+                            info!(creator = %sender_str, channel_type = %channel_type, "Creating channel");
+                            let channel = self
+                                .channel
+                                .create(
+                                    sender_str,
+                                    ct,
+                                    topic,
+                                    description,
+                                    avatar,
+                                    background,
+                                    members,
+                                )
+                                .await?;
+
+                            // Notify invited members
+                            for member in &channel.members {
+                                if member.status == crate::channel::MemberStatus::Invited {
+                                    self.notify
+                                        .notify(member.aid.clone(), channel.said.clone())
+                                        .await;
+                                }
+                            }
+
+                            Ok(Some(serde_json::to_string(&channel).unwrap()))
+                        }
+                        ExchangeArguments::ChannelMsg { ch, a } => {
+                            let sender_str = sender_aid
+                                .ok_or(MessageboxError::VerificationFailure)?
+                                .to_string();
+                            let channel = self.channel.get(&ch).await.ok_or(
+                                MessageboxError::UnknownMessage("Channel not found".into()),
+                            )?;
+
+                            // Check write permission
+                            if !channel.can_write(&sender_str) {
+                                warn!(sender = %sender_str, channel = %ch, "Channel write denied");
                                 return Err(MessageboxError::AclDenied(sender_str));
                             }
-                        }
 
-                        info!(recipient = %i, sender = ?sender_aid, msg_len = a.len(), "Forwarding message");
-                        let digest_algo: HashFunction = (HashFunctionCode::Blake3_256).into();
-                        let sai = digest_algo.derive(a.as_bytes()).to_string();
-                        self.storage.save(i.clone(), a, sai).await.to_string();
-                        Ok(None)
-                    }
-                    ExchangeArguments::SetFirebase { i, f: t } => {
-                        info!(identifier = %i, "Registering Firebase token");
-                        self.notify.save_token(i, t).await;
-                        Ok(None)
-                    }
-                    ExchangeArguments::ChannelCreate {
-                        channel_type,
-                        topic,
-                        description,
-                        avatar,
-                        background,
-                        members,
-                    } => {
-                        let sender_str = sender_aid
-                            .ok_or(MessageboxError::VerificationFailure)?
-                            .to_string();
-                        let ct = parse_channel_type(&channel_type)?;
-                        info!(creator = %sender_str, channel_type = %channel_type, "Creating channel");
-                        let channel = self
-                            .channel
-                            .create(sender_str, ct, topic, description, avatar, background, members)
-                            .await?;
+                            info!(channel = %ch, sender = %sender_str, msg_len = a.len(), "Channel message");
+                            let digest_algo: HashFunction = (HashFunctionCode::Blake3_256).into();
+                            let sai = digest_algo.derive(a.as_bytes()).to_string();
+                            // Store structured message with sender metadata
+                            let structured_msg = json!({
+                                "sender": sender_str,
+                                "content": a,
+                                "ts": Utc::now().to_rfc3339(),
+                                "digest": sai,
+                            });
+                            self.storage
+                                .save_channel(ch.clone(), structured_msg.to_string(), sai.clone())
+                                .await;
 
-                        // Notify invited members
-                        for member in &channel.members {
-                            if member.status == crate::channel::MemberStatus::Invited {
-                                self.notify
-                                    .notify(member.aid.clone(), channel.said.clone())
-                                    .await;
+                            // Notify active members (except sender)
+                            for member in &channel.members {
+                                if member.status == crate::channel::MemberStatus::Active
+                                    && member.aid != sender_str
+                                {
+                                    self.notify.notify(member.aid.clone(), sai.clone()).await;
+                                }
                             }
+
+                            Ok(None)
                         }
-
-                        Ok(Some(serde_json::to_string(&channel).unwrap()))
-                    }
-                    ExchangeArguments::ChannelMsg { ch, a } => {
-                        let sender_str = sender_aid
-                            .ok_or(MessageboxError::VerificationFailure)?
-                            .to_string();
-                        let channel = self
-                            .channel
-                            .get(&ch)
-                            .await
-                            .ok_or(MessageboxError::UnknownMessage(
-                                "Channel not found".into(),
-                            ))?;
-
-                        // Check write permission
-                        if !channel.can_write(&sender_str) {
-                            warn!(sender = %sender_str, channel = %ch, "Channel write denied");
-                            return Err(MessageboxError::AclDenied(sender_str));
+                        ExchangeArguments::ChannelInvite { ch, to, role } => {
+                            let sender_str = sender_aid
+                                .ok_or(MessageboxError::VerificationFailure)?
+                                .to_string();
+                            let member_role = role
+                                .as_deref()
+                                .map(parse_member_role)
+                                .transpose()?
+                                .unwrap_or(MemberRole::Member);
+                            info!(channel = %ch, inviter = %sender_str, target = %to, "Channel invite");
+                            self.channel
+                                .invite(ch.clone(), sender_str, to.clone(), member_role)
+                                .await?;
+                            self.notify.notify(to, ch).await;
+                            Ok(None)
                         }
-
-                        info!(channel = %ch, sender = %sender_str, msg_len = a.len(), "Channel message");
-                        let digest_algo: HashFunction = (HashFunctionCode::Blake3_256).into();
-                        let sai = digest_algo.derive(a.as_bytes()).to_string();
-                        // Store structured message with sender metadata
-                        let structured_msg = json!({
-                            "sender": sender_str,
-                            "content": a,
-                            "ts": Utc::now().to_rfc3339(),
-                            "digest": sai,
-                        });
-                        self.storage
-                            .save_channel(ch.clone(), structured_msg.to_string(), sai.clone())
-                            .await;
-
-                        // Notify active members (except sender)
-                        for member in &channel.members {
-                            if member.status == crate::channel::MemberStatus::Active
-                                && member.aid != sender_str
-                            {
-                                self.notify
-                                    .notify(member.aid.clone(), sai.clone())
-                                    .await;
+                        ExchangeArguments::ChannelAccept { ch } => {
+                            let sender_str = sender_aid
+                                .ok_or(MessageboxError::VerificationFailure)?
+                                .to_string();
+                            info!(channel = %ch, accepter = %sender_str, "Channel accept");
+                            self.channel.accept(ch, sender_str).await?;
+                            Ok(None)
+                        }
+                        ExchangeArguments::ChannelReject { ch } => {
+                            let sender_str = sender_aid
+                                .ok_or(MessageboxError::VerificationFailure)?
+                                .to_string();
+                            info!(channel = %ch, rejecter = %sender_str, "Channel reject");
+                            self.channel.reject(ch, sender_str).await?;
+                            Ok(None)
+                        }
+                        ExchangeArguments::ChannelLeave { ch } => {
+                            let sender_str = sender_aid
+                                .ok_or(MessageboxError::VerificationFailure)?
+                                .to_string();
+                            info!(channel = %ch, leaver = %sender_str, "Channel leave");
+                            self.channel.leave(ch, sender_str).await?;
+                            Ok(None)
+                        }
+                        ExchangeArguments::ChannelRemove { ch, target } => {
+                            let sender_str = sender_aid
+                                .ok_or(MessageboxError::VerificationFailure)?
+                                .to_string();
+                            info!(channel = %ch, remover = %sender_str, target = %target, "Channel remove");
+                            self.channel.remove(ch, sender_str, target).await?;
+                            Ok(None)
+                        }
+                        ExchangeArguments::ChannelSetRole { ch, target, role } => {
+                            let sender_str = sender_aid
+                                .ok_or(MessageboxError::VerificationFailure)?
+                                .to_string();
+                            let member_role = parse_member_role(&role)?;
+                            info!(channel = %ch, setter = %sender_str, target = %target, role = %role, "Channel set role");
+                            self.channel
+                                .set_role(ch, sender_str, target, member_role)
+                                .await?;
+                            Ok(None)
+                        }
+                        ExchangeArguments::ChannelUpdate {
+                            ch,
+                            description,
+                            avatar,
+                            background,
+                        } => {
+                            let sender_str = sender_aid
+                                .ok_or(MessageboxError::VerificationFailure)?
+                                .to_string();
+                            info!(channel = %ch, updater = %sender_str, "Channel update");
+                            self.channel
+                                .update(ch, sender_str, description, avatar, background)
+                                .await?;
+                            Ok(None)
+                        }
+                        ExchangeArguments::ChannelSubscribe { ch } => {
+                            // For public broadcasts, subscription is handled by EMQX natively.
+                            // This is a no-op on the server side.
+                            debug!(channel = %ch, "Channel subscribe (no-op, handled by MQTT broker)");
+                            Ok(None)
+                        }
+                        ExchangeArguments::TaskSync { i, a } => {
+                            // Task sync: same ACL enforcement as Fwd, then store in
+                            // recipient's mailbox. All task logic is client-side.
+                            let acl_tokens = self.acl.get_tokens(&i).await;
+                            if !acl_tokens.is_empty() {
+                                let authorized = match sender_aid {
+                                    Some(aid) => acl_tokens.iter().any(|t| t == aid),
+                                    None => false,
+                                };
+                                if !authorized {
+                                    let sender_str = sender_aid.unwrap_or("unknown").to_string();
+                                    warn!(
+                                        sender = %sender_str,
+                                        recipient = %i,
+                                        "ACL denied task sync: sender not in recipient's whitelist"
+                                    );
+                                    return Err(MessageboxError::AclDenied(sender_str));
+                                }
                             }
-                        }
 
-                        Ok(None)
-                    }
-                    ExchangeArguments::ChannelInvite { ch, to, role } => {
-                        let sender_str = sender_aid
-                            .ok_or(MessageboxError::VerificationFailure)?
-                            .to_string();
-                        let member_role = role
-                            .as_deref()
-                            .map(parse_member_role)
-                            .transpose()?
-                            .unwrap_or(MemberRole::Member);
-                        info!(channel = %ch, inviter = %sender_str, target = %to, "Channel invite");
-                        self.channel
-                            .invite(ch.clone(), sender_str, to.clone(), member_role)
-                            .await?;
-                        self.notify.notify(to, ch).await;
-                        Ok(None)
-                    }
-                    ExchangeArguments::ChannelAccept { ch } => {
-                        let sender_str = sender_aid
-                            .ok_or(MessageboxError::VerificationFailure)?
-                            .to_string();
-                        info!(channel = %ch, accepter = %sender_str, "Channel accept");
-                        self.channel.accept(ch, sender_str).await?;
-                        Ok(None)
-                    }
-                    ExchangeArguments::ChannelReject { ch } => {
-                        let sender_str = sender_aid
-                            .ok_or(MessageboxError::VerificationFailure)?
-                            .to_string();
-                        info!(channel = %ch, rejecter = %sender_str, "Channel reject");
-                        self.channel.reject(ch, sender_str).await?;
-                        Ok(None)
-                    }
-                    ExchangeArguments::ChannelLeave { ch } => {
-                        let sender_str = sender_aid
-                            .ok_or(MessageboxError::VerificationFailure)?
-                            .to_string();
-                        info!(channel = %ch, leaver = %sender_str, "Channel leave");
-                        self.channel.leave(ch, sender_str).await?;
-                        Ok(None)
-                    }
-                    ExchangeArguments::ChannelRemove { ch, target } => {
-                        let sender_str = sender_aid
-                            .ok_or(MessageboxError::VerificationFailure)?
-                            .to_string();
-                        info!(channel = %ch, remover = %sender_str, target = %target, "Channel remove");
-                        self.channel.remove(ch, sender_str, target).await?;
-                        Ok(None)
-                    }
-                    ExchangeArguments::ChannelSetRole { ch, target, role } => {
-                        let sender_str = sender_aid
-                            .ok_or(MessageboxError::VerificationFailure)?
-                            .to_string();
-                        let member_role = parse_member_role(&role)?;
-                        info!(channel = %ch, setter = %sender_str, target = %target, role = %role, "Channel set role");
-                        self.channel
-                            .set_role(ch, sender_str, target, member_role)
-                            .await?;
-                        Ok(None)
-                    }
-                    ExchangeArguments::ChannelUpdate {
-                        ch,
-                        description,
-                        avatar,
-                        background,
-                    } => {
-                        let sender_str = sender_aid
-                            .ok_or(MessageboxError::VerificationFailure)?
-                            .to_string();
-                        info!(channel = %ch, updater = %sender_str, "Channel update");
-                        self.channel
-                            .update(ch, sender_str, description, avatar, background)
-                            .await?;
-                        Ok(None)
-                    }
-                    ExchangeArguments::ChannelSubscribe { ch } => {
-                        // For public broadcasts, subscription is handled by EMQX natively.
-                        // This is a no-op on the server side.
-                        debug!(channel = %ch, "Channel subscribe (no-op, handled by MQTT broker)");
-                        Ok(None)
-                    }
-                    ExchangeArguments::TaskSync { i, a } => {
-                        // Task sync: same ACL enforcement as Fwd, then store in
-                        // recipient's mailbox. All task logic is client-side.
-                        let acl_tokens = self.acl.get_tokens(&i).await;
-                        if !acl_tokens.is_empty() {
-                            let authorized = match sender_aid {
-                                Some(aid) => acl_tokens.iter().any(|t| t == aid),
-                                None => false,
-                            };
-                            if !authorized {
-                                let sender_str = sender_aid.unwrap_or("unknown").to_string();
-                                warn!(
-                                    sender = %sender_str,
-                                    recipient = %i,
-                                    "ACL denied task sync: sender not in recipient's whitelist"
-                                );
-                                return Err(MessageboxError::AclDenied(sender_str));
-                            }
+                            info!(recipient = %i, sender = ?sender_aid, payload_len = a.len(), "Task sync");
+                            let digest_algo: HashFunction = (HashFunctionCode::Blake3_256).into();
+                            let sai = digest_algo.derive(a.as_bytes()).to_string();
+                            self.storage.save(i.clone(), a, sai).await.to_string();
+                            Ok(None)
                         }
-
-                        info!(recipient = %i, sender = ?sender_aid, payload_len = a.len(), "Task sync");
-                        let digest_algo: HashFunction = (HashFunctionCode::Blake3_256).into();
-                        let sai = digest_algo.derive(a.as_bytes()).to_string();
-                        self.storage.save(i.clone(), a, sai).await.to_string();
-                        Ok(None)
                     }
-                },
+                }
             }
         } else {
             warn!(

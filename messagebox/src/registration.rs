@@ -84,11 +84,7 @@ struct RegistrationActor {
 
 impl RegistrationActor {
     fn new(receiver: mpsc::Receiver<RegistrationMessage>, db: Db, mode: RegistrationMode) -> Self {
-        Self {
-            receiver,
-            db,
-            mode,
-        }
+        Self { receiver, db, mode }
     }
 
     async fn handle_message(&mut self, msg: RegistrationMessage) {
@@ -311,20 +307,14 @@ impl RegistrationHandle {
 
     pub async fn add_whitelist(&self, aid: String) -> Result<(), MessageboxError> {
         let (send, recv) = oneshot::channel();
-        let msg = RegistrationMessage::AddWhitelist {
-            aid,
-            sender: send,
-        };
+        let msg = RegistrationMessage::AddWhitelist { aid, sender: send };
         let _ = self.sender.send(msg).await;
         recv.await.map_err(|_| MessageboxError::KilledSender)?
     }
 
     pub async fn remove_whitelist(&self, aid: String) -> bool {
         let (send, recv) = oneshot::channel();
-        let msg = RegistrationMessage::RemoveWhitelist {
-            aid,
-            sender: send,
-        };
+        let msg = RegistrationMessage::RemoveWhitelist { aid, sender: send };
         let _ = self.sender.send(msg).await;
         recv.await.unwrap_or(false)
     }

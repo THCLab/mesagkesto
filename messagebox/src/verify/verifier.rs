@@ -1,14 +1,8 @@
 use std::{collections::HashMap, path::Path, sync::Arc, time::Duration};
 
-use keri_sdk::{
-    BasicPrefix, EndRole, IdentifierPrefix, LocationScheme, Oobi, QueryResponse, Signature,
-    WatcherResponseError,
-};
 use keri_sdk::keri_controller::{
-    communication::SendingError,
-    config::ControllerConfig,
-    error::ControllerError,
-    RedbController, RedbIdentifier,
+    communication::SendingError, config::ControllerConfig, error::ControllerError, RedbController,
+    RedbIdentifier,
 };
 use keri_sdk::keri_core::{
     actor::prelude::{HashFunction, HashFunctionCode},
@@ -17,6 +11,10 @@ use keri_sdk::keri_core::{
     oobi::Role,
     processor::event_storage::EventStorage,
     transport::TransportError,
+};
+use keri_sdk::{
+    BasicPrefix, EndRole, IdentifierPrefix, LocationScheme, Oobi, QueryResponse, Signature,
+    WatcherResponseError,
 };
 use tokio::{
     sync::{
@@ -132,9 +130,12 @@ impl VerifyData {
                     Err(MessageboxError::MissingEvent(id, event_sai.unwrap()))
                 }
             }
-            Signature::NonTransferable(Nontransferable::Couplet(couplets)) => Ok((couplets
-                .iter()
-                .all(|(id, sig)| id.verify(data, sig).unwrap()), None)),
+            Signature::NonTransferable(Nontransferable::Couplet(couplets)) => Ok((
+                couplets
+                    .iter()
+                    .all(|(id, sig)| id.verify(data, sig).unwrap()),
+                None,
+            )),
             Signature::NonTransferable(Nontransferable::Indexed(_sigs)) => {
                 todo!()
             }
