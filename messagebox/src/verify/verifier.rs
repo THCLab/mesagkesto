@@ -5,13 +5,10 @@ use keri_sdk::keri_controller::{
     RedbIdentifier,
 };
 use keri_sdk::keri_core::{
-    actor::prelude::{HashFunction, HashFunctionCode},
-    database::redb::RedbDatabase,
-    event_message::signature::Nontransferable,
-    oobi::Role,
-    processor::event_storage::EventStorage,
-    transport::TransportError,
+    database::redb::RedbDatabase, event_message::signature::Nontransferable, oobi::Role,
+    processor::event_storage::EventStorage, transport::TransportError,
 };
+use keri_sdk::protocol::{HashFunction, HashFunctionCode};
 use keri_sdk::{
     BasicPrefix, EndRole, IdentifierPrefix, LocationScheme, Oobi, QueryResponse, Signature,
     WatcherResponseError,

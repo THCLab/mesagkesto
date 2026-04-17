@@ -1,11 +1,11 @@
 use std::{path::Path, sync::Arc};
 
 use keri_sdk::keri_core::{
-    actor::prelude::{HashFunctionCode, SerializationFormats},
     error::Error,
     event_message::signature::get_signatures,
     query::reply_event::{ReplyEvent, ReplyRoute, SignedReply},
 };
+use keri_sdk::protocol::{HashFunctionCode, SerializationFormats};
 use keri_sdk::{
     BasicPrefix, IdentifierPrefix, LocationScheme, SelfAddressingIdentifier, SelfSigningPrefix,
     Signature, Signer,

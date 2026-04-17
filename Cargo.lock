@@ -777,9 +777,9 @@ dependencies = [
 
 [[package]]
 name = "cesrox"
-version = "2.0.0-beta.3"
+version = "2.0.0-beta.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "036710dd9b1a8586cb53a2edc3f6e3c2c3726f1d9bf9effb0a4555402259ba22"
+checksum = "e385805e543cf83e56a992c899dea6584f6db8f77a73f6225ff947886eb79d3b"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2249,7 +2249,7 @@ dependencies = [
 [[package]]
 name = "keri-controller"
 version = "0.17.13"
-source = "git+https://github.com/THCLab/keriox.git?branch=development#156cc2cfdec10853caa70d0f656cd3ab9e6c113f"
+source = "git+https://github.com/THCLab/keriox.git?branch=development#2616e78765678ef56eb3f7af21282946dc7420f8"
 dependencies = [
  "async-std",
  "async-trait",
@@ -2271,7 +2271,7 @@ dependencies = [
 [[package]]
 name = "keri-core"
 version = "0.17.13"
-source = "git+https://github.com/THCLab/keriox.git?branch=development#156cc2cfdec10853caa70d0f656cd3ab9e6c113f"
+source = "git+https://github.com/THCLab/keriox.git?branch=development#2616e78765678ef56eb3f7af21282946dc7420f8"
 dependencies = [
  "arrayref",
  "async-trait",
@@ -2308,7 +2308,7 @@ dependencies = [
 [[package]]
 name = "keri-sdk"
 version = "0.1.9"
-source = "git+https://github.com/THCLab/keriox.git?branch=development#156cc2cfdec10853caa70d0f656cd3ab9e6c113f"
+source = "git+https://github.com/THCLab/keriox.git?branch=development#2616e78765678ef56eb3f7af21282946dc7420f8"
 dependencies = [
  "base64 0.13.1",
  "cesrox",
@@ -2462,7 +2462,6 @@ dependencies = [
  "jsonwebtoken",
  "keri-sdk",
  "redb 4.0.0",
- "said",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -3562,9 +3561,9 @@ dependencies = [
 
 [[package]]
 name = "said"
-version = "0.5.2"
+version = "0.5.3-beta.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e60c10ae86aa426a9678f93da6ae00b16be1af0fcfaa189683292202e1ffbff2"
+checksum = "b4ab6e4a795a3a19e5438aa23be8fb402e864443fe622e7d8f17806f6c8c5697"
 dependencies = [
  "base64 0.22.1",
  "blake2 0.10.6",
@@ -4021,7 +4020,7 @@ dependencies = [
 [[package]]
 name = "teliox"
 version = "0.17.13"
-source = "git+https://github.com/THCLab/keriox.git?branch=development#156cc2cfdec10853caa70d0f656cd3ab9e6c113f"
+source = "git+https://github.com/THCLab/keriox.git?branch=development#2616e78765678ef56eb3f7af21282946dc7420f8"
 dependencies = [
  "arrayref",
  "base64 0.13.1",

@@ -1,8 +1,8 @@
 use anyhow::Error;
+use keri_sdk::protocol::{HashFunction, HashFunctionCode};
 use messagebox::{
     db::Db, forward_message, messagebox::MessageBox, query_by_digest, query_by_sn, register_token,
 };
-use said::derivation::{HashFunction, HashFunctionCode};
 use tempfile::Builder;
 use url::Url;
 

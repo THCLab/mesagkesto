@@ -22,7 +22,6 @@ clap = { version = "4.1.1", features = ["derive"] }
 anyhow = { version = "1.0.56" }
 tokio = {version = "1.29.1", features = ["sync", "rt", "macros", "rt-multi-thread", "time"]}
 ureq = {version = "3.3", features = ["json"]}
-said = {version = "0.5.2"}
 redb = "4.0"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }

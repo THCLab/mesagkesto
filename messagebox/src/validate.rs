@@ -1,5 +1,5 @@
 use chrono::Utc;
-use keri_sdk::keri_core::actor::prelude::{HashFunction, HashFunctionCode};
+use keri_sdk::protocol::{HashFunction, HashFunctionCode};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::sync::{mpsc, oneshot};
