@@ -122,14 +122,15 @@ impl VerifyHandle {
             sender: send,
         };
 
-        // Ignore send errors. If this send fails, so does the
-        // recv.await below. There's no reason to check for the
-        // same failure twice.
         let _ = self.validate_sender.send(msg).await;
-        match recv.await {
-            Ok(res) => res,
-            Err(_) => {
+        match tokio::time::timeout(std::time::Duration::from_secs(30), recv).await {
+            Ok(Ok(res)) => res,
+            Ok(Err(_)) => {
                 warn!("Verify actor task has been killed");
+                Err(MessageboxError::KilledSender)
+            }
+            Err(_) => {
+                warn!("Verify actor timed out after 30s");
                 Err(MessageboxError::KilledSender)
             }
         }

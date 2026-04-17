@@ -2454,6 +2454,7 @@ dependencies = [
  "actix-web",
  "actix-web-actors",
  "anyhow",
+ "cesrox",
  "chrono",
  "clap",
  "dauthz-core",

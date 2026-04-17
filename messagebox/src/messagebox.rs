@@ -1,8 +1,13 @@
 use std::{path::Path, sync::Arc};
 
+use cesrox::group::Group;
 use keri_sdk::keri_core::{
     error::Error,
-    event_message::signature::get_signatures,
+    event::sections::seal::EventSeal,
+    event_message::{
+        cesr_adapter::parse_cesr_stream,
+        signature::{get_signatures, SignerData},
+    },
     query::reply_event::{ReplyEvent, ReplyRoute, SignedReply},
 };
 use keri_sdk::protocol::{HashFunctionCode, SerializationFormats};
@@ -173,10 +178,9 @@ impl MessageBox {
         let (data, signatures) = Self::split_cesr_stream(body.as_bytes())?;
         let payload_str =
             String::from_utf8(data).map_err(|e| MessageboxError::Unparsable(e.to_string()))?;
-        let sig_vec: Vec<_> = signatures.collect();
-        debug!(sig_count = sig_vec.len(), "Message signatures parsed");
+        debug!(sig_count = signatures.len(), "Message signatures parsed");
 
-        match self.verify_handle.verify(&payload_str, sig_vec).await {
+        match self.verify_handle.verify(&payload_str, signatures).await {
             Ok(sender_id) => {
                 let sender_aid_str = sender_id.as_ref().map(|id| id.to_string());
                 info!(sender = ?sender_aid_str, "Message verified successfully, validating");
@@ -248,22 +252,58 @@ impl MessageBox {
         self.response_handle.get_by_digest(sai).await
     }
 
-    pub fn split_cesr_stream(
-        input: &[u8],
-    ) -> Result<(Vec<u8>, impl Iterator<Item = Signature>), MessageboxError> {
-        let msg = keri_sdk::keri_core::event_message::cesr_adapter::parse_cesr_stream(input)
-            .map_err(|e| MessageboxError::Unparsable(e.to_string()))?;
+    pub fn split_cesr_stream(input: &[u8]) -> Result<(Vec<u8>, Vec<Signature>), MessageboxError> {
+        let msg =
+            parse_cesr_stream(input).map_err(|e| MessageboxError::Unparsable(e.to_string()))?;
         let data = match msg.payload {
             keri_sdk::cesrox::payload::Payload::JSON(json) => json,
             keri_sdk::cesrox::payload::Payload::CBOR(_) => todo!(),
             keri_sdk::cesrox::payload::Payload::MGPK(_) => todo!(),
         };
-        let signatures = msg
-            .attachments
-            .into_iter()
-            .map(get_signatures)
-            .filter_map(|sig| sig.ok())
-            .flatten();
+        let signatures = reassemble_signatures(msg.attachments);
         Ok((data, signatures))
     }
+}
+
+fn reassemble_signatures(attachments: Vec<Group>) -> Vec<Signature> {
+    let mut signatures = Vec::new();
+    let mut i = 0;
+    while i < attachments.len() {
+        match &attachments[i] {
+            Group::AnchoringSeals(seals) => {
+                if let Some(seal) = seals.first() {
+                    let event_seal = EventSeal::new(
+                        seal.0.clone().into(),
+                        seal.1,
+                        SelfAddressingIdentifier::from(seal.2.clone()),
+                    );
+                    i += 1;
+                    let indexed_sigs = if i < attachments.len() {
+                        if let Group::IndexedControllerSignatures(sigs) = &attachments[i] {
+                            let s: Vec<_> = sigs.iter().map(|s| s.clone().into()).collect();
+                            i += 1;
+                            s
+                        } else {
+                            vec![]
+                        }
+                    } else {
+                        vec![]
+                    };
+                    signatures.push(Signature::Transferable(
+                        SignerData::EventSeal(event_seal),
+                        indexed_sigs,
+                    ));
+                } else {
+                    i += 1;
+                }
+            }
+            _ => {
+                if let Ok(sigs) = get_signatures(attachments[i].clone()) {
+                    signatures.extend(sigs);
+                }
+                i += 1;
+            }
+        }
+    }
+    signatures
 }

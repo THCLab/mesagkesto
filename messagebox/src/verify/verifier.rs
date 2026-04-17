@@ -119,7 +119,10 @@ impl VerifyData {
                     keri_sdk::keri_core::event_message::signature::SignerData::LastEstablishment(id) => {
                         (storage.get_state(id).map(|e| e.current), id.clone(), None)
                     }
-                    keri_sdk::keri_core::event_message::signature::SignerData::JustSignatures => todo!(),
+                    keri_sdk::keri_core::event_message::signature::SignerData::JustSignatures => {
+                        warn!("JustSignatures without anchoring seal — cannot identify signer");
+                        return Err(MessageboxError::VerificationFailure);
+                    }
                 };
                 if let Some(k) = kc {
                     Ok((k.verify(data, sigs).unwrap(), Some(id)))
@@ -134,7 +137,8 @@ impl VerifyData {
                 None,
             )),
             Signature::NonTransferable(Nontransferable::Indexed(_sigs)) => {
-                todo!()
+                warn!("Indexed non-transferable signatures not yet supported");
+                Err(MessageboxError::VerificationFailure)
             }
         }
     }
@@ -157,7 +161,8 @@ impl VerifyData {
     }
 
     async fn ask_watcher(&self, id: &IdentifierPrefix) {
-        loop {
+        let max_retries = 5u32;
+        for attempt in 0..=max_retries {
             let watchers = match self.controller.watchers() {
                 Ok(w) => w,
                 Err(_) => return,
@@ -201,8 +206,13 @@ impl VerifyData {
             }
 
             if should_retry {
-                sleep(Duration::from_secs(3)).await;
-                continue;
+                if attempt < max_retries {
+                    warn!(attempt, max_retries, id = %id, "Watcher query failed, retrying");
+                    sleep(Duration::from_secs(3)).await;
+                    continue;
+                } else {
+                    warn!(id = %id, "Watcher query failed after {} retries, giving up", max_retries);
+                }
             }
 
             if !errs.is_empty() {
@@ -356,8 +366,11 @@ impl VerifyData {
     pub async fn handle_task(&self) {
         debug!("Verification task handler started");
         loop {
-            let mut queue = self.task_queue.lock().await;
-            if let Some(task) = queue.recv().await {
+            let task = {
+                let mut queue = self.task_queue.lock().await;
+                queue.recv().await
+            };
+            if let Some(task) = task {
                 match task {
                     VerificationTask::Verify(message, signature, sender) => {
                         debug!(
@@ -370,7 +383,7 @@ impl VerifyData {
                     VerificationTask::Find(id) => {
                         debug!(id = %id, "Handle find task");
                         info!(id = %id, "Querying watcher for identifier");
-                        self.ask_watcher(&id).await
+                        self.ask_watcher(&id).await;
                     }
                     VerificationTask::Reverify(id) => {
                         debug!(id = %id, "Handle reverify task");

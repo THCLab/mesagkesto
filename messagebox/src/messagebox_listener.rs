@@ -717,7 +717,7 @@ pub(crate) mod http_handlers {
         // (OOBI was already resolved during challenge creation)
         let verified = data
             .verify_handle
-            .verify(&payload_str, signatures.collect())
+            .verify(&payload_str, signatures)
             .await
             .is_ok();
 
