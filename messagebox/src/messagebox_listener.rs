@@ -178,13 +178,10 @@ pub(crate) mod http_handlers {
 
     use crate::{messagebox::MessageBox, MessageboxError};
     use actix_web::{http::header::ContentType, web, HttpResponse};
-    use keri_sdk::keri_core::{
-        actor::parse_reply_stream,
-        event_message::signed_event_message::{Message, Op},
-        oobi::Role,
-        query::reply_event::SignedReply,
-    };
-    use keri_sdk::{IdentifierPrefix, Oobi, SelfAddressingIdentifier};
+    use keri_sdk::keri_core::oobi::Role;
+    use keri_sdk::keri_core::query::reply_event::SignedReply;
+    use keri_sdk::oobi::{extract_aid, parse_reply_stream, replies_to_cesr_stream};
+    use keri_sdk::{IdentifierPrefix, SelfAddressingIdentifier};
     use tracing::{debug, warn};
 
     use crate::auth::AuthResult;
@@ -286,15 +283,9 @@ pub(crate) mod http_handlers {
         })
     }
 
-    fn oobis_to_cesr_stream(
-        oobis: &mut impl Iterator<Item = SignedReply>,
-    ) -> Result<Vec<u8>, ApiError> {
-        oobis.try_fold(vec![], |mut acc, sr| {
-            let mut oobi = Message::Op(Op::Reply(sr)).to_cesr()?;
-
-            acc.append(&mut oobi);
-            Ok(acc)
-        })
+    fn oobis_to_cesr_stream(oobis: &[SignedReply]) -> Result<Vec<u8>, ApiError> {
+        replies_to_cesr_stream(oobis)
+            .map_err(|e| ApiError::MessageboxError(MessageboxError::Unparsable(e.to_string())))
     }
 
     /// Get this messagebox's own OOBI.
@@ -337,7 +328,7 @@ pub(crate) mod http_handlers {
     ) -> Result<HttpResponse, ApiError> {
         debug!(eid = %eid, "GET /oobi/eid");
         let loc_scheme = data.get_loc_scheme_for_id(&eid).await?.unwrap_or_default();
-        let oobis: Vec<u8> = oobis_to_cesr_stream(&mut loc_scheme.into_iter())?;
+        let oobis: Vec<u8> = oobis_to_cesr_stream(&loc_scheme)?;
         debug!(eid = %eid, body_len = oobis.len(), "GET /oobi/eid -> 200");
         Ok(HttpResponse::Ok()
             .content_type(ContentType::plaintext())
@@ -375,12 +366,10 @@ pub(crate) mod http_handlers {
                 .get_role_oobi(cid.clone(), role.clone(), eid.clone());
         let loc_scheme_feature = data.get_loc_scheme_for_id(&eid);
         let (end_role, loc_scheme) = tokio::join!(end_role_feature, loc_scheme_feature);
-        let oobis = oobis_to_cesr_stream(
-            &mut end_role
-                .ok_or(ApiError::MissingEndRoleOobi(cid.clone(), role.clone()))?
-                .into_iter()
-                .chain(loc_scheme?.unwrap_or_default()),
-        )?;
+        let mut combined: Vec<SignedReply> =
+            end_role.ok_or(ApiError::MissingEndRoleOobi(cid.clone(), role.clone()))?;
+        combined.extend(loc_scheme?.unwrap_or_default());
+        let oobis = oobis_to_cesr_stream(&combined)?;
 
         debug!(%cid, ?role, %eid, body_len = oobis.len(), "GET /oobi/cid/role/eid -> 200");
         Ok(HttpResponse::Ok()
@@ -556,34 +545,8 @@ pub(crate) mod http_handlers {
     /// Prefers `cid` from EndRole entries (the transferable AID) over `eid`
     /// from LocationScheme entries (which may be a witness basic prefix).
     fn aid_from_oobi(oobi_str: &str) -> Result<String, ApiError> {
-        // Try parsing as array first (real-world OOBIs are often arrays of
-        // LocationScheme + EndRole entries)
-        if let Ok(oobis) = serde_json::from_str::<Vec<Oobi>>(oobi_str) {
-            // Prefer cid from EndRole entries — that's the controlling identifier
-            for oobi in &oobis {
-                if let Oobi::EndRole(er) = oobi {
-                    return Ok(er.cid.to_string());
-                }
-            }
-            // Fall back to eid from LocationScheme
-            for oobi in &oobis {
-                if let Oobi::Location(loc) = oobi {
-                    return Ok(loc.eid.to_string());
-                }
-            }
-            Err(ApiError::MessageboxError(
-                crate::MessageboxError::OobiParsingError,
-            ))
-        } else {
-            // Single OOBI object
-            let oobi: Oobi = serde_json::from_str(oobi_str)
-                .map_err(|_| ApiError::MessageboxError(crate::MessageboxError::OobiParsingError))?;
-            let aid = match oobi {
-                Oobi::Location(loc) => loc.eid.to_string(),
-                Oobi::EndRole(er) => er.cid.to_string(),
-            };
-            Ok(aid)
-        }
+        extract_aid(oobi_str)
+            .map_err(|_| ApiError::MessageboxError(crate::MessageboxError::OobiParsingError))
     }
 
     /// Request signed DauthZ challenge bound to an OOBI.
@@ -2040,6 +2003,8 @@ pub enum ApiError {
     ParseError(#[from] ParseError),
     #[error(transparent)]
     MessageboxError(#[from] MessageboxError),
+    #[error(transparent)]
+    SdkError(#[from] keri_sdk::Error),
     #[error("Can't be parsed")]
     Unparsable,
     #[error("No end role oobi of identifier: {0}, {1:?}")]
