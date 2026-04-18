@@ -66,6 +66,19 @@ pub enum MessageboxError {
     RegistrationDenied(String),
 }
 
+impl From<keri_sdk::Error> for MessageboxError {
+    fn from(e: keri_sdk::Error) -> Self {
+        match e {
+            keri_sdk::Error::MissingKelEvent { id, event_sai } => {
+                MessageboxError::MissingEvent(id, event_sai.unwrap_or_default())
+            }
+            keri_sdk::Error::Controller(c) => MessageboxError::Controller(c),
+            keri_sdk::Error::VerificationFailed(_) => MessageboxError::VerificationFailure,
+            other => MessageboxError::Unparsable(other.to_string()),
+        }
+    }
+}
+
 pub fn register_token(id: String, token: String) -> MessageType {
     MessageType::Exn(ExchangeArguments::SetFirebase { i: id, f: token })
 }

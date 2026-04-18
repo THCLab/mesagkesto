@@ -5,8 +5,11 @@ use keri_sdk::keri_controller::{
     RedbIdentifier,
 };
 use keri_sdk::keri_core::{
-    database::redb::RedbDatabase, event_message::signature::Nontransferable, oobi::Role,
-    processor::event_storage::EventStorage, transport::TransportError,
+    database::redb::RedbDatabase,
+    event_message::signature::{Nontransferable, SignerData},
+    oobi::Role,
+    processor::event_storage::EventStorage,
+    transport::TransportError,
 };
 use keri_sdk::signing::content_sai;
 use keri_sdk::{
@@ -98,7 +101,6 @@ impl VerifyData {
         })
     }
 
-    /// Verify a signature and return (valid, sender_id).
     fn verify(
         s: &Signature,
         data: &[u8],
@@ -107,20 +109,18 @@ impl VerifyData {
         match s {
             Signature::Transferable(sigd, sigs) => {
                 let (kc, id, event_sai) = match sigd {
-                    keri_sdk::keri_core::event_message::signature::SignerData::EventSeal(es) => {
-                        if let Ok(r) =
-                            storage.get_keys_at_event(&es.prefix, es.sn, &es.event_digest())
-                        {
-                            (r, es.prefix.clone(), Some(es.event_digest()))
-                        } else {
-                            (None, es.prefix.clone(), Some(es.event_digest()))
-                        }
-                    }
-                    keri_sdk::keri_core::event_message::signature::SignerData::LastEstablishment(id) => {
+                    SignerData::EventSeal(es) => (
+                        storage
+                            .get_keys_at_event(&es.prefix, es.sn, &es.event_digest())
+                            .ok()
+                            .flatten(),
+                        es.prefix.clone(),
+                        Some(es.event_digest()),
+                    ),
+                    SignerData::LastEstablishment(id) => {
                         (storage.get_state(id).map(|e| e.current), id.clone(), None)
                     }
-                    keri_sdk::keri_core::event_message::signature::SignerData::JustSignatures => {
-                        warn!("JustSignatures without anchoring seal — cannot identify signer");
+                    SignerData::JustSignatures => {
                         return Err(MessageboxError::VerificationFailure);
                     }
                 };
@@ -137,7 +137,6 @@ impl VerifyData {
                 None,
             )),
             Signature::NonTransferable(Nontransferable::Indexed(_sigs)) => {
-                warn!("Indexed non-transferable signatures not yet supported");
                 Err(MessageboxError::VerificationFailure)
             }
         }
