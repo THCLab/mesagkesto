@@ -4,7 +4,8 @@ use std::sync::Arc;
 use chrono::Utc;
 use dauthz_core::{CeremonyPurpose, Challenge, ChallengeResponse};
 use dauthz_server::DauthzService;
-use keri_sdk::{BasicPrefix, SelfSigningPrefix, Signer};
+use keri_sdk::signing::sign_nontransferable;
+use keri_sdk::{BasicPrefix, Signer};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, info, warn};
@@ -95,23 +96,9 @@ impl AuthActor {
         }
     }
 
-    /// Build a CESR stream: JSON payload + NontransReceiptCouples(identifier, signature)
     fn sign_to_cesr(&self, payload_json: &[u8]) -> Result<Vec<u8>, MessageboxError> {
-        use keri_sdk::cesrox::group::Group;
-
-        let sig = self
-            .signer
-            .sign(payload_json)
-            .map_err(MessageboxError::SigningError)?;
-
-        // Build the CESR attachment: NontransReceiptCouples group
-        let cesr_sig = SelfSigningPrefix::Ed25519Sha512(sig);
-        let group =
-            Group::NontransReceiptCouples(vec![(self.identifier.clone().into(), cesr_sig.into())]);
-
-        let mut stream = payload_json.to_vec();
-        stream.extend_from_slice(group.to_cesr_str().as_bytes());
-        Ok(stream)
+        sign_nontransferable(&self.identifier, &self.signer, payload_json)
+            .map_err(|e| MessageboxError::AuthError(e.to_string()))
     }
 
     async fn handle_message(&mut self, msg: AuthMessage) {
