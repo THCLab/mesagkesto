@@ -1,14 +1,10 @@
 use std::{path::Path, sync::Arc};
 
-use keri_sdk::keri_core::{
-    error::Error,
-    query::reply_event::{ReplyEvent, ReplyRoute, SignedReply},
-};
-use keri_sdk::protocol::{HashFunctionCode, SerializationFormats};
+use keri_sdk::keri_core::{error::Error, query::reply_event::SignedReply};
+use keri_sdk::oobi::build_location_reply;
 use keri_sdk::signing::parse_signed_envelope;
 use keri_sdk::{
-    BasicPrefix, IdentifierPrefix, LocationScheme, SelfAddressingIdentifier, SelfSigningPrefix,
-    Signature, Signer,
+    BasicPrefix, IdentifierPrefix, LocationScheme, SelfAddressingIdentifier, Signature, Signer,
 };
 
 use actix::{Actor, Addr};
@@ -82,16 +78,7 @@ impl MessageBox {
         let loc_scheme =
             LocationScheme::new(IdentifierPrefix::Basic(id.clone()), scheme, address.clone());
 
-        let reply = ReplyEvent::new_reply(
-            ReplyRoute::LocScheme(loc_scheme.clone()),
-            HashFunctionCode::Blake3_256,
-            SerializationFormats::JSON,
-        );
-        let signed_reply = SignedReply::new_nontrans(
-            reply.clone(),
-            id.clone(),
-            SelfSigningPrefix::Ed25519Sha512(signer.sign(reply.encode()?)?),
-        );
+        let signed_reply = build_location_reply(&id, &signer, loc_scheme.clone())?;
         debug!("Signed own OOBI");
 
         let notify_handle = if let Some(key) = server_key {
@@ -227,18 +214,9 @@ impl MessageBox {
     ) -> Result<Option<Vec<SignedReply>>, Error> {
         let oobis = self.oobi_handle.get_location(eid.clone()).await;
         oobis
-            .map(|oobis_to_sign| -> Result<_, Error> {
-                oobis_to_sign
-                    .iter()
-                    .map(|oobi_to_sing| -> Result<_, Error> {
-                        let signature = self.signer.sign(oobi_to_sing.encode()?)?;
-                        Ok(SignedReply::new_nontrans(
-                            oobi_to_sing.clone(),
-                            self.identifier.clone(),
-                            SelfSigningPrefix::Ed25519Sha512(signature),
-                        ))
-                    })
-                    .collect()
+            .map(|oobis| {
+                keri_sdk::oobi::build_location_replies(&self.identifier, &self.signer, &oobis)
+                    .map_err(|e| Error::SerializationError(e.to_string()))
             })
             .transpose()
     }
