@@ -4,3 +4,9 @@ members = [
 	"messagebox",
 	"bindings/dart",
 ]
+
+[patch."https://github.com/THCLab/keriox.git"]
+keri-sdk = { path = "/mnt/Storage/Workspace/HCF/sources/keriox/keriox_sdk" }
+keri-controller = { path = "/mnt/Storage/Workspace/HCF/sources/keriox/components/controller" }
+keri-core = { path = "/mnt/Storage/Workspace/HCF/sources/keriox/keriox_core" }
+teliox = { path = "/mnt/Storage/Workspace/HCF/sources/keriox/support/teliox" }

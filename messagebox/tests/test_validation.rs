@@ -1,5 +1,5 @@
 use anyhow::Error;
-use keri_sdk::protocol::{HashFunction, HashFunctionCode};
+use keri_sdk::signing::content_hash;
 use messagebox::{
     db::Db, forward_message, messagebox::MessageBox, query_by_digest, query_by_sn, register_token,
 };
@@ -87,9 +87,8 @@ async fn test_validation() -> Result<(), Error> {
         .await;
     assert_eq!(res?, None);
 
-    let digest_algo: HashFunction = (HashFunctionCode::Blake3_256).into();
-    let sai0 = digest_algo.derive("saved0".as_bytes()).to_string();
-    let sai1 = digest_algo.derive("saved1".as_bytes()).to_string();
+    let sai0 = content_hash("saved0".as_bytes());
+    let sai1 = content_hash("saved1".as_bytes());
     let qry = query_by_digest("Identifier".to_string(), vec![sai0, sai1]);
     let query_by_digest = serde_json::to_string(&qry).unwrap();
     dbg!(query_by_digest);

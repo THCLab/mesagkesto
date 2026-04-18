@@ -1,5 +1,5 @@
 use chrono::Utc;
-use keri_sdk::protocol::{HashFunction, HashFunctionCode};
+use keri_sdk::signing::content_hash;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, info};
@@ -106,10 +106,7 @@ fn compute_channel_said(
         "topic": topic,
         "created_at": created_at,
     });
-    let digest: HashFunction = HashFunctionCode::Blake3_256.into();
-    digest
-        .derive(creation_event.to_string().as_bytes())
-        .to_string()
+    content_hash(creation_event.to_string().as_bytes())
 }
 
 pub enum ChannelMsg {

@@ -8,7 +8,7 @@ use keri_sdk::keri_core::{
     database::redb::RedbDatabase, event_message::signature::Nontransferable, oobi::Role,
     processor::event_storage::EventStorage, transport::TransportError,
 };
-use keri_sdk::protocol::{HashFunction, HashFunctionCode};
+use keri_sdk::signing::content_sai;
 use keri_sdk::{
     BasicPrefix, EndRole, IdentifierPrefix, LocationScheme, Oobi, QueryResponse, Signature,
     WatcherResponseError,
@@ -274,8 +274,7 @@ impl VerifyData {
                             .await;
                     }
 
-                    let digest: keri_sdk::SelfAddressingIdentifier =
-                        HashFunction::from(HashFunctionCode::Blake3_256).derive(message.as_bytes());
+                    let digest = content_sai(message.as_bytes());
                     warn!(id = %id, digest = %digest, "Response not ready, waiting for KEL update");
                     Err(MessageboxError::ResponseNotReady(digest))
                 } else {

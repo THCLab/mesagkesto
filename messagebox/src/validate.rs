@@ -1,5 +1,5 @@
 use chrono::Utc;
-use keri_sdk::protocol::{HashFunction, HashFunctionCode};
+use keri_sdk::signing::{content_hash, content_sai};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::sync::{mpsc, oneshot};
@@ -217,8 +217,7 @@ impl ValidateActor {
                             }
 
                             info!(recipient = %i, sender = ?sender_aid, msg_len = a.len(), "Forwarding message");
-                            let digest_algo: HashFunction = (HashFunctionCode::Blake3_256).into();
-                            let sai = digest_algo.derive(a.as_bytes()).to_string();
+                            let sai = content_hash(a.as_bytes());
                             self.storage.save(i.clone(), a, sai).await.to_string();
                             Ok(None)
                         }
@@ -279,8 +278,7 @@ impl ValidateActor {
                             }
 
                             info!(channel = %ch, sender = %sender_str, msg_len = a.len(), "Channel message");
-                            let digest_algo: HashFunction = (HashFunctionCode::Blake3_256).into();
-                            let sai = digest_algo.derive(a.as_bytes()).to_string();
+                            let sai = content_hash(a.as_bytes());
                             // Store structured message with sender metadata
                             let structured_msg = json!({
                                 "sender": sender_str,
@@ -404,8 +402,7 @@ impl ValidateActor {
                             }
 
                             info!(recipient = %i, sender = ?sender_aid, payload_len = a.len(), "Task sync");
-                            let digest_algo: HashFunction = (HashFunctionCode::Blake3_256).into();
-                            let sai = digest_algo.derive(a.as_bytes()).to_string();
+                            let sai = content_hash(a.as_bytes());
                             self.storage.save(i.clone(), a, sai).await.to_string();
                             Ok(None)
                         }
@@ -441,9 +438,7 @@ impl ValidateActor {
                     Ok(to_save) => {
                         if let Some(response) = to_save {
                             debug!(response_len = response.len(), "Saving async query response");
-                            let digest: keri_sdk::SelfAddressingIdentifier =
-                                HashFunction::from(HashFunctionCode::Blake3_256)
-                                    .derive(message.as_bytes());
+                            let digest = content_sai(message.as_bytes());
                             self.responses_handle.save(response, digest).await;
                         } else {
                             debug!("No async response to save");

@@ -2249,7 +2249,6 @@ dependencies = [
 [[package]]
 name = "keri-controller"
 version = "0.17.13"
-source = "git+https://github.com/THCLab/keriox.git?branch=development#2616e78765678ef56eb3f7af21282946dc7420f8"
 dependencies = [
  "async-std",
  "async-trait",
@@ -2271,7 +2270,6 @@ dependencies = [
 [[package]]
 name = "keri-core"
 version = "0.17.13"
-source = "git+https://github.com/THCLab/keriox.git?branch=development#2616e78765678ef56eb3f7af21282946dc7420f8"
 dependencies = [
  "arrayref",
  "async-trait",
@@ -2308,7 +2306,6 @@ dependencies = [
 [[package]]
 name = "keri-sdk"
 version = "0.1.9"
-source = "git+https://github.com/THCLab/keriox.git?branch=development#2616e78765678ef56eb3f7af21282946dc7420f8"
 dependencies = [
  "base64 0.13.1",
  "cesrox",
@@ -4021,7 +4018,6 @@ dependencies = [
 [[package]]
 name = "teliox"
 version = "0.17.13"
-source = "git+https://github.com/THCLab/keriox.git?branch=development#2616e78765678ef56eb3f7af21282946dc7420f8"
 dependencies = [
  "arrayref",
  "base64 0.13.1",
