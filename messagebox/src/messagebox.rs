@@ -1,16 +1,11 @@
 use std::{path::Path, sync::Arc};
 
-use cesrox::group::Group;
 use keri_sdk::keri_core::{
     error::Error,
-    event::sections::seal::EventSeal,
-    event_message::{
-        cesr_adapter::parse_cesr_stream,
-        signature::{get_signatures, SignerData},
-    },
     query::reply_event::{ReplyEvent, ReplyRoute, SignedReply},
 };
 use keri_sdk::protocol::{HashFunctionCode, SerializationFormats};
+use keri_sdk::signing::parse_signed_envelope;
 use keri_sdk::{
     BasicPrefix, IdentifierPrefix, LocationScheme, SelfAddressingIdentifier, SelfSigningPrefix,
     Signature, Signer,
@@ -253,57 +248,6 @@ impl MessageBox {
     }
 
     pub fn split_cesr_stream(input: &[u8]) -> Result<(Vec<u8>, Vec<Signature>), MessageboxError> {
-        let msg =
-            parse_cesr_stream(input).map_err(|e| MessageboxError::Unparsable(e.to_string()))?;
-        let data = match msg.payload {
-            keri_sdk::cesrox::payload::Payload::JSON(json) => json,
-            keri_sdk::cesrox::payload::Payload::CBOR(_) => todo!(),
-            keri_sdk::cesrox::payload::Payload::MGPK(_) => todo!(),
-        };
-        let signatures = reassemble_signatures(msg.attachments);
-        Ok((data, signatures))
+        parse_signed_envelope(input).map_err(|e| MessageboxError::Unparsable(e.to_string()))
     }
-}
-
-fn reassemble_signatures(attachments: Vec<Group>) -> Vec<Signature> {
-    let mut signatures = Vec::new();
-    let mut i = 0;
-    while i < attachments.len() {
-        match &attachments[i] {
-            Group::AnchoringSeals(seals) => {
-                if let Some(seal) = seals.first() {
-                    let event_seal = EventSeal::new(
-                        seal.0.clone().into(),
-                        seal.1,
-                        SelfAddressingIdentifier::from(seal.2.clone()),
-                    );
-                    i += 1;
-                    let indexed_sigs = if i < attachments.len() {
-                        if let Group::IndexedControllerSignatures(sigs) = &attachments[i] {
-                            let s: Vec<_> = sigs.iter().map(|s| s.clone().into()).collect();
-                            i += 1;
-                            s
-                        } else {
-                            vec![]
-                        }
-                    } else {
-                        vec![]
-                    };
-                    signatures.push(Signature::Transferable(
-                        SignerData::EventSeal(event_seal),
-                        indexed_sigs,
-                    ));
-                } else {
-                    i += 1;
-                }
-            }
-            _ => {
-                if let Ok(sigs) = get_signatures(attachments[i].clone()) {
-                    signatures.extend(sigs);
-                }
-                i += 1;
-            }
-        }
-    }
-    signatures
 }
