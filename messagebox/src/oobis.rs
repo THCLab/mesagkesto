@@ -1,14 +1,11 @@
 use std::path::Path;
 
-use keri_sdk::keri_core::{
-    database::redb::RedbDatabase,
-    oobi::Role,
-    oobi_manager::RedbOobiManager,
-    query::reply_event::{ReplyEvent, SignedReply},
-};
+use keri_sdk::keri_core::oobi::Role;
+use keri_sdk::keri_core::query::reply_event::{ReplyEvent, SignedReply};
+use keri_sdk::oobi_store::OobiStore;
 use keri_sdk::IdentifierPrefix;
 use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 pub enum OobiMessage {
     GetLocation {
@@ -31,9 +28,8 @@ pub enum OobiMessage {
 }
 
 pub struct OobiActor {
-    // From where get messages
     receiver: mpsc::Receiver<OobiMessage>,
-    pub oobi_manager: RedbOobiManager,
+    store: OobiStore,
 }
 
 impl OobiActor {
@@ -41,10 +37,7 @@ impl OobiActor {
         debug!(oobi_db_path = %oobi_db_path.display(), "Initializing OOBI actor");
         OobiActor {
             receiver,
-            oobi_manager: RedbOobiManager::new(std::sync::Arc::new(
-                RedbDatabase::new(&oobi_db_path.join("oobi_db")).unwrap(),
-            ))
-            .unwrap(),
+            store: OobiStore::open(oobi_db_path).expect("Failed to open OOBI store"),
         }
     }
     fn handle_message(&mut self, msg: OobiMessage) {
@@ -54,10 +47,7 @@ impl OobiActor {
                 sender,
             } => {
                 debug!(endpoint_id = %endpoint_identifier, "Getting location scheme");
-                let loc_scheme = self
-                    .oobi_manager
-                    .get_loc_scheme(&endpoint_identifier)
-                    .unwrap_or_default();
+                let loc_scheme = self.store.get_location(&endpoint_identifier);
                 match loc_scheme.is_empty() {
                     false => {
                         debug!(endpoint_id = %endpoint_identifier, count = loc_scheme.len(), "Location schemes found")
@@ -73,12 +63,9 @@ impl OobiActor {
                 sender,
             } => {
                 debug!(cid = %controller_identifier, role = ?role, "Getting end role OOBI");
-                let role_clone = role.clone();
                 let end_role = self
-                    .oobi_manager
-                    .get_end_role(&controller_identifier, role_clone)
-                    .unwrap()
-                    .unwrap_or_default();
+                    .store
+                    .get_end_role(&controller_identifier, role.clone());
                 match end_role.is_empty() {
                     false => {
                         debug!(cid = ?controller_identifier, role = ?role, count = end_role.len(), "End role OOBIs found")
@@ -92,13 +79,7 @@ impl OobiActor {
             OobiMessage::RegisterOobi { oobis, sender } => {
                 let oobis_count = oobis.len();
                 debug!(oobi_count = oobis_count, "Registering OOBIs");
-                let mut success_count = 0;
-                for reply in oobis {
-                    match self.oobi_manager.process_oobi(&reply) {
-                        Ok(_) => success_count += 1,
-                        Err(e) => warn!(error = %e, "Failed to process OOBI"),
-                    }
-                }
+                let success_count = self.store.register_many(&oobis);
                 info!(
                     registered = success_count,
                     total = oobis_count,
